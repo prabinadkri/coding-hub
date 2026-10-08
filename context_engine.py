@@ -351,4 +351,8 @@ def project_tree():
             projects.append(dict(value, conversations=conversations))
         except (OSError, ValueError, sqlite3.Error):
             continue
-    return sorted(projects, key=lambda p: (bool(p.get('last_activity')), p.get('last_activity', 0), max((c['updated'] for c in p['conversations']), default=0)), reverse=True)
+    now = time.time()
+    # Older hosts could save timestamps before their system clock was corrected.
+    # Keep that history intact, but do not let future dates pin old chats on top.
+    return sorted(projects, key=lambda p: (bool(p.get('last_activity')), p.get('last_activity', 0),
+        max((c['updated'] for c in p['conversations'] if c['updated'] <= now + 60), default=0)), reverse=True)

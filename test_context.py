@@ -45,6 +45,21 @@ class ContextTests(unittest.TestCase):
         with self.memory.connect() as db:
             self.assertEqual(db.execute('SELECT result FROM turns').fetchone()[0], original)
 
+    def test_legacy_future_timestamps_do_not_pin_old_projects_on_top(self):
+        from context_engine import project_tree
+        self.memory.conversation(goal='Old clock')
+        with self.memory.connect() as db:
+            db.execute('UPDATE conversations SET updated=?', (9999999999,))
+        other = self.root / 'recent'; other.mkdir()
+        recent = ProjectMemory(other); recent.conversation(goal='Correct clock')
+        for memory in (self.memory, recent):
+            path = memory.directory / 'project.json'
+            metadata = json.loads(path.read_text()); metadata.pop('last_activity')
+            path.write_text(json.dumps(metadata))
+        self.assertEqual(project_tree()[0]['project'], str(other.resolve()))
+        with self.memory.connect() as db:
+            self.assertEqual(db.execute('SELECT updated FROM conversations').fetchone()[0], 9999999999)
+
     def test_incremental_index_finds_symbols_and_updates_changed_and_deleted_files(self):
         path = self.project / 'module.py'
         path.write_text('def validate_checkout_total(amount):\n    return amount >= 0\n')
