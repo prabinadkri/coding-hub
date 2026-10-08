@@ -384,18 +384,9 @@ def run_process(args, cwd, env, log, timeout=1200, render_reply=True):
 
 @contextlib.contextmanager
 def project_lock(project):
-    locks = private_dir(STATE / "locks")
-    path = locks / (hashlib.sha256(str(project).encode()).hexdigest() + ".lock")
-    try:
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        raise RuntimeError(f"Another hub task owns this project. Lock: {path}. If its process has ended, remove that lock.")
-    with os.fdopen(descriptor, "w") as stream:
-        json.dump({"pid": os.getpid(), "project": str(project)}, stream)
-    try:
+    from task_lock import workspace_lock
+    with workspace_lock(STATE, project):
         yield
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def candidates(backend, quality):
@@ -635,14 +626,15 @@ def open_agent(project, backend, quality):
 
 
 def menu():
-    print("\n" + terminal_ui.style("◇ Coding Hub") + "\n\n8  Conversation · choose a project and model\n1  Automatic coding task (cloud → free models → local)\n"
+    menu_text = ("\n" + terminal_ui.style("◇ Coding Hub") + "\n\n8  Conversation · choose a project and model\n1  Automatic coding task (cloud → free models → local)\n"
           "2  OpenCode + local Qwen 8B\n3  OpenCode + a verified free online model\n"
           "4  Antigravity / Google sign-in\n5  Analyze a project without changing files\n"
           "6  Status\n7  Finish local model setup\n0  Exit")
     while True:
+        print(menu_text)
         try:
-            choice = input("\nChoose: ").strip()
-            if choice == "0":
+            choice = input("\nChoose [8 · conversation]: ").strip() or "8"
+            if choice.lower() in ("0", "q", "quit", "exit", "/quit"):
                 return 0
             if choice == "6":
                 status()
@@ -685,6 +677,8 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
     try:
         import readline
         old_completer = readline.get_completer()
+        old_delimiters = readline.get_completer_delims()
+        readline.set_completer_delims(' \t\n')
         def complete(text, state):
             choices = [cmd for cmd in terminal_ui.COMMANDS if cmd.startswith(text)]
             return choices[state] if 0 <= state < len(choices) else None
@@ -726,6 +720,19 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                         print('Choose auto, smart, antigravity, free, local, claude or openai.'); continue
                     backend, model = argument, None
                     print('Route: ' + backend + ' · use /models to choose a model'); continue
+                if name in ('/project','/general'):
+                    if name == '/project' and not argument:
+                        print('Use /project /absolute/path, or /general for standalone tasks.'); continue
+                    memory = ProjectMemory(general_workspace() if name == '/general' else argument)
+                    conversation, diagnostic_context = None, None
+                    terminal_ui.banner('General tasks' if is_general(memory.project) else memory.project, backend, model, apply)
+                    continue
+                if name == '/mode':
+                    if argument not in ('analysis','build'):
+                        print('Mode: ' + ('build' if apply else 'analysis') + '. Use /mode analysis or /mode build.'); continue
+                    apply = argument == 'build'
+                    print('Commands and requested changes enabled.' if apply else 'Analysis mode; no command execution.')
+                    continue
                 if name == '/edit':
                     if argument not in ('on','off'): print('Use /edit on or /edit off.'); continue
                     apply = argument == 'on'
@@ -766,13 +773,16 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
             except (OSError, ValueError, RuntimeError) as error:
                 print('\n' + terminal_ui.style(str(error), '31'))
     finally:
-        if readline: readline.set_completer(old_completer)
+        if readline:
+            readline.set_completer(old_completer)
+            readline.set_completer_delims(old_delimiters)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action")
     sub.add_parser("status")
+    sub.add_parser("menu", help="Open the optional launcher menu")
     sub.add_parser("doctor", help="Run read-only local system checks")
     changes = sub.add_parser('changes', help='Review source changes from a saved coding task')
     changes.add_argument('--project', default=os.getcwd())
@@ -880,7 +890,9 @@ def main():
         return chat(args.project, args.backend, args.quality, args.apply, args.resume, args.model)
     if args.action == "open":
         return open_agent(args.project, args.backend, args.quality)
-    return menu()
+    if args.action == 'menu':
+        return menu()
+    return chat(general_workspace())
 
 
 if __name__ == "__main__":

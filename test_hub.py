@@ -118,7 +118,8 @@ class HubTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 with hub.project_lock(self.project):
                     pass
-        self.assertEqual(list((hub.STATE / "locks").glob("*")), [])
+        with hub.project_lock(self.project):
+            pass  # A released workspace is reusable; the stable lock inode stays.
 
     def test_fallback_carries_partial_work_and_original_request(self):
         (self.project / "user.txt").write_text("preserve me")

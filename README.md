@@ -68,7 +68,8 @@ These routes use your existing plan’s limits and model eligibility. They are n
 ### CLI
 
 ```bash
-codehub                              # Menu; option 8 starts a conversation
+codehub                              # Start chatting immediately
+codehub menu                         # Optional launcher menu
 codehub chat --general               # Standalone chat; no project folder
 codehub chat --general --backend local
 codehub run --general --apply "Run uname -s and df -h /, then summarize the output without changing anything"
@@ -92,6 +93,8 @@ Inside `codehub chat`:
 - `/paste` accepts a multiline message. Finish with a single `.` on its own line; `/cancel` discards it.
 - `/models` lists choices; `/model MODEL_ID` selects one; `/model default` restores the default.
 - `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic and Smart are supported too.
+- `/project /path/to/folder` starts a project conversation; `/general` returns to standalone tasks.
+- `/mode analysis` explains only; `/mode build` enables commands and requested changes.
 - `/edit on` enables commands and requested changes; `/edit off` returns to analysis mode.
 - `/doctor` prints a read-only system report and includes it in your next message. `/new` clears that pending report.
 - `/changes` reviews the latest task diff; `/memory` shows shared instructions and source-index coverage; `/status` shows the current setup.
@@ -102,7 +105,7 @@ Interactive terminals show an animated progress line, readable replies, and labe
 
 ### General tasks and Linux help
 
-Use **New chat → General task** in the app/browser, or `codehub chat --general`. These chats are saved under **General chats**, separately from project conversations. Ask questions in analysis mode; enable **Allow commands & changes** (CLI: `/edit on` or `--apply`) when you want the agent to execute a task. For example: “Run `df -h /` and explain the disk usage without changing anything.”
+Use **New chat → General task** in the app/browser, or just run `codehub` in a terminal. `codehub chat --general` is equivalent. These chats are saved under **General chats**, separately from project conversations. Ask questions in analysis mode; enable **Allow commands & changes** (CLI: `/edit on` or `--apply`) when you want the agent to execute a task. For example: “Run `df -h /` and explain the disk usage without changing anything.”
 
 **System check** runs a fixed set of read-only checks for disks, memory, CPU load, NVIDIA, time synchronization, failed services, and Secure Boot. It makes no model request and changes no settings. **Discuss in general chat** lets you review the report before sending it to your chosen model. Missing commands are shown as unavailable, not treated as evidence of a fault.
 
@@ -268,7 +271,7 @@ Qwen3 8B uses Q4_K_M weights, 16K context, a 2,048-token output limit, and expli
 
 The 16K setting is a hardware compromise, below [Ollama's documented 64K+ OpenCode requirement](https://docs.ollama.com/integrations/opencode). Small tasks work in testing; individual requests and tool results can still exceed the limit even with retrieval and checkpoints. Prefer cloud agents for complex work. See [GPU setup](docs/gpu-setup.md) for driver troubleshooting.
 
-Automatic routing starts Antigravity immediately. Free-model pricing is fetched only if that route is reached. Dashboard status uses a short cache; it never authorizes a paid request from cached pricing. There is one active dashboard task at a time, and the coordinator also locks each project.
+Automatic routing starts Antigravity immediately. Free-model pricing is fetched only if that route is reached. Dashboard status uses a short cache; it never authorizes a paid request from cached pricing. There is one active dashboard task at a time, and the coordinator also locks each workspace. Process-lifetime locks release when the owner exits; abandoned lock files from older versions are recovered automatically. A genuinely active task remains protected from concurrent changes.
 
 ## Free access and privacy
 

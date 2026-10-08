@@ -2,6 +2,9 @@ import contextlib
 import io
 import json
 import os
+import select
+import subprocess
+import time
 from pathlib import Path
 import sys
 import tempfile
@@ -38,6 +41,57 @@ class TerminalTests(unittest.TestCase):
             self.assertIn('general task',config['agent']['build']['prompt'])
             self.assertEqual(config['permission']['bash'],'allow')
             self.assertNotIn('Implement the requested change in this project',hub.task_prompt('Check disk space','',True,general=True))
+
+    @unittest.skipIf(os.name == 'nt', 'PTY interaction requires Unix')
+    def test_real_terminal_completes_slash_commands_and_exits(self):
+        import pty
+        master, slave = pty.openpty()
+        with tempfile.TemporaryDirectory() as temporary:
+            process = subprocess.Popen([sys.executable,str(hub.ROOT/'hub.py')],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(os.environ,CODING_HUB_STATE=temporary,TERM='xterm'))
+            os.close(slave)
+            output = b''
+            try:
+                deadline=time.monotonic()+5
+                while b'You' not in output and time.monotonic()<deadline:
+                    if select.select([master],[],[],.1)[0]: output+=os.read(master,65536)
+                self.assertIn(b'You',output)
+                self.assertNotIn(b'Choose:',output)
+                os.write(master,b'/he\t\n/quit\n')
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    if select.select([master],[],[],.1)[0]:
+                        try: chunk=os.read(master,65536)
+                        except OSError: break
+                        if not chunk: break
+                        output+=chunk
+                    elif process.poll() is not None: break
+                self.assertEqual(process.wait(timeout=2),0)
+                self.assertIn(b'Conversation',output)
+                self.assertNotIn(b'Unknown command',output)
+            finally:
+                if process.poll() is None: process.kill(); process.wait()
+                os.close(master)
+
+    def test_menu_default_starts_general_chat_then_redraws_and_accepts_quit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            commands=iter(['','','auto','q'])
+            output=io.StringIO()
+            with patch.object(hub,'STATE',Path(temporary)), patch('builtins.input',side_effect=lambda _:next(commands)), patch.object(hub,'chat',return_value=0) as chat, contextlib.redirect_stdout(output):
+                self.assertEqual(hub.menu(),0)
+            self.assertEqual(chat.call_args.args[0],Path(temporary)/'workspaces/general')
+            self.assertEqual(output.getvalue().count('8  Conversation'),2)
+
+    def test_mode_and_workspace_commands_apply_to_the_next_task(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);project=root/'project';project.mkdir()
+            commands=iter(['/mode build','/project '+str(project),'Check this project','/general','/mode analysis','Explain disk space','/quit'])
+            with patch.object(hub,'STATE',root/'state'), patch('builtins.input',side_effect=lambda _:next(commands)), patch.object(hub,'run_task',return_value=0) as run, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(hub.chat(hub.general_workspace()),0)
+            self.assertEqual(run.call_args_list[0].args[0],project.resolve())
+            self.assertTrue(run.call_args_list[0].args[4])
+            self.assertEqual(run.call_args_list[1].args[0],(root/'state/workspaces/general').resolve())
+            self.assertFalse(run.call_args_list[1].args[4])
 
     def test_cancel_paste_and_invalid_command_never_start_tasks(self):
         with tempfile.TemporaryDirectory() as temporary:
