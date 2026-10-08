@@ -13,7 +13,7 @@
     <button class="new-task" id="new-task"><span data-icon="plus"></span> New chat <kbd>N</kbd></button>
     <button id="new-project" class="new-project">+ New project</button>
     <nav aria-label="Main navigation"><button class="nav-item active" data-view="workspace"><span data-icon="grid"></span> Chats <span class="nav-dot"></span></button></nav>
-    <div class="nav-label">PROJECTS & CHATS</div><div id="project-tree" class="project-tree" aria-label="Projects and chats"><p class="tree-empty">Your projects and chats will appear here.</p></div>
+    <div class="nav-label">PROJECTS & CHATS</div><p id="sidebar-status" class="tree-empty" role="status">Loading saved chats…</p><div id="project-tree" class="project-tree" aria-label="Projects and chats"></div>
     <div id="sidebar-tools" class="sidebar-tools"><button id="tools-toggle" class="tools-toggle" popovertarget="tools-menu" aria-expanded="false" aria-controls="tools-menu"><span data-icon="settings"></span> Tools &amp; settings</button><div id="tools-menu" popover="auto"><div class="tools-heading">WORKSPACE TOOLS</div><nav aria-label="Tools and settings">
       <button class="nav-item" data-view="history"><span data-icon="history"></span> Task history</button>
       <button class="nav-item" data-view="models"><span data-icon="chip"></span> Models & hardware</button>
@@ -21,7 +21,7 @@
       <button class="nav-item" data-view="accounts"><span data-icon="lock"></span> Accounts</button>
       <button class="nav-item" data-view="guide"><span data-icon="book"></span> Quick guide</button>
     </nav></div></div>
-    <div class="sidebar-bottom"><div class="private-mark"><span data-icon="shield"></span> Your workspace stays yours</div><p>Choose local for inference on your computer. Cloud routes send your task to their provider.</p><div class="sidebar-version"><span class="online-dot"></span> Runs on your laptop <span>v2.9.0</span></div></div>
+    <div class="sidebar-bottom"><div class="private-mark"><span data-icon="shield"></span> Your workspace stays yours</div><p>Choose local for inference on your computer. Cloud routes send your task to their provider.</p><div class="sidebar-version"><span class="online-dot"></span> Runs on your laptop <span>v2.9.1</span></div></div>
   </aside>
   <main>
     <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="page-title">Chats</strong></div><div class="top-actions"><button id="theme-toggle" class="small-button" aria-pressed="false">Dark mode</button><span id="connection" class="connection"><i></i> Connecting</span><button id="refresh" class="icon-button" aria-label="Refresh model status" title="Refresh model status"><span data-icon="refresh"></span></button></div></header>

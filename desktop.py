@@ -129,6 +129,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.tasks = []
             self.history_signature = None
             self.refreshing = False
+            self.sidebar_refreshing = False
             self.history_epoch = 0
             self.deleting_chat = False
             self.connected = False
@@ -288,6 +289,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             project_heading = self.label('PROJECTS & CHATS', 'section')
             project_heading.set_margin_top(6)
             sidebar.append(project_heading)
+            self.sidebar_status = self.label('Loading saved chats…', 'sidebar-foot')
+            sidebar.append(self.sidebar_status)
             self.project_tree = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             tree_scroll = Gtk.ScrolledWindow(vexpand=True)
             tree_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -871,9 +874,33 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 buffer.set_text(output or "Waiting for the agent’s first update…")
                 self.output.scroll_to_iter(buffer.get_end_iter(), 0, False, 0, 1)
 
+        def refresh_sidebar(self):
+            # Saved local history must not wait for hardware/provider status,
+            # task logs, or a restored conversation that can no longer load.
+            if self.closed_window or self.sidebar_refreshing or self.deleting_chat:
+                return
+            self.sidebar_refreshing = True
+            epoch = self.history_epoch
+            def loaded(data):
+                self.sidebar_refreshing = False
+                if epoch != self.history_epoch:
+                    self.refresh_sidebar()
+                    return
+                self.render_tree(data['projects'])
+                self.sidebar_status.set_visible(False)
+            def failed(error):
+                self.sidebar_refreshing = False
+                if epoch == self.history_epoch:
+                    self.sidebar_status.set_text('Saved chats could not load. Retrying…')
+                    self.sidebar_status.set_visible(True)
+                else:
+                    self.refresh_sidebar()
+            self.background(lambda: api('projects'), loaded, failed)
+
         def refresh(self):
             if self.closed_window:
                 return False
+            self.refresh_sidebar()
             if self.refreshing or self.deleting_chat:
                 return True
             self.refreshing = True
@@ -885,14 +912,13 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 tasks = api("tasks")["tasks"]
                 identifier = selected or next((t["id"] for t in tasks if conversation and t.get('conversation') == conversation and t["status"] in dashboard.ACTIVE), None)
                 detail = api("tasks/" + identifier) if identifier and any(t['id'] == identifier for t in tasks) else None
-                tree = api('projects')['projects']
                 try:
                     messages = api('conversation?project=' + quote(project) + '&id=' + conversation) if conversation else None
                 except RuntimeError as error:
                     if 'Conversation does not belong' not in str(error):
                         raise
                     messages = {'deleted': conversation}
-                return status, tasks, detail, tree, messages
+                return status, tasks, detail, messages
             def refreshed(result):
                 self.refreshing = False
                 if epoch == self.history_epoch:
@@ -909,10 +935,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def refreshed(self, result):
             self.refreshing = False
-            status, self.tasks, detail, tree, messages = result
+            status, self.tasks, detail, messages = result
             if detail:
                 self.tasks = [detail if t['id'] == detail['id'] else t for t in self.tasks]
-            self.render_tree(tree)
             self.render_quota(status.get('quota', {}))
             self.render_free_quota(status.get('free_quota', {}))
             if messages:

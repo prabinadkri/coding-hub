@@ -1,4 +1,6 @@
 import os
+import json
+import urllib.request
 from pathlib import Path
 import signal
 import subprocess
@@ -30,6 +32,41 @@ class DesktopTests(unittest.TestCase):
             self.assertIn('/var/lib/snapd/desktop', paths)
             desktop.prepare_browser_environment()
             self.assertEqual(os.environ['XDG_DATA_DIRS'].split(':'), paths)
+
+    @unittest.skipIf(os.name == "nt", "Unix background server lifecycle")
+    def test_saved_sidebar_survives_server_restart_without_a_new_task(self):
+        from context_engine import ProjectMemory
+        children = []
+        original = subprocess.Popen
+        def capture(*args, **kwargs):
+            child = original(*args, **kwargs)
+            children.append(child)
+            return child
+        with tempfile.TemporaryDirectory() as temporary, patch.object(hub, 'STATE', Path(temporary) / 'state'):
+            expected = set()
+            for name in ('first', 'second'):
+                folder = Path(temporary) / name; folder.mkdir()
+                memory = ProjectMemory(folder)
+                chat = memory.conversation(goal='Saved ' + name)
+                memory.record(chat, name + '-task', 'Original question', 'Saved answer', 'completed')
+                expected.add(chat)
+            try:
+                for _ in range(2):
+                    with patch('desktop.subprocess.Popen', side_effect=capture):
+                        url = desktop.ensure_server(0)
+                    base, token = url.split('/#', 1)
+                    request = urllib.request.Request(base + '/api/projects', headers={'X-CodeHub-Token': token})
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        projects = json.load(response)['projects']
+                    self.assertEqual({c['id'] for p in projects for c in p['conversations']}, expected)
+                    self.assertFalse(list((hub.STATE / 'dashboard' / 'tasks').glob('*.json')))
+                    children[-1].send_signal(signal.SIGINT)
+                    children[-1].wait(timeout=10)
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        child.send_signal(signal.SIGINT)
+                    child.wait(timeout=10)
 
     @unittest.skipIf(os.name == "nt", "Unix background server lifecycle")
     def test_app_starts_a_real_server_then_reuses_it(self):

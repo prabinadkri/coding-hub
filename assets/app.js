@@ -17,7 +17,7 @@ const $=id=>document.getElementById(id), activeStates=['queued','running','stopp
 let token=location.hash.slice(1)||sessionStorage.getItem('coding-hub-token')||'';
 if(location.hash){sessionStorage.setItem('coding-hub-token',token);history.replaceState(null,'',location.pathname);}
 let conversation=null,conversationProject='',treeSignature='',chatSignature='',pendingMessage=null,messageArchive=new Map(),archiveConversation=null;
-let memoryProject=null,chatLayout=null,followChat=true;
+let memoryProject=null,chatLayout=null,followChat=true,sidebarBusy=false;
 let deleteTarget=null,deleteProjectTarget=null,deletingChat=false,historyEpoch=0;
 let signinId=null,signinBusy=false,signinPollBusy=false,chosenModels={},modelSignature='';
 let route='auto',selected=null,tasks=[],statusData={},folderPath='',folderParent='',lastOutput='',timer,refreshBusy=false,wasConnected=false;
@@ -33,7 +33,7 @@ function positionTools(){
 $('tools-menu').addEventListener('toggle',e=>{$('tools-toggle').setAttribute('aria-expanded',String(e.newState==='open'));positionTools();});
 window.addEventListener('resize',positionTools);
 function toast(message,error=false){clearTimeout(timer);$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;timer=setTimeout(()=>$('toast').hidden=true,6000);}
-async function api(path,body){const options={headers:{'X-CodeHub-Token':token}};if(body!==undefined){options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}const res=await fetch('/api/'+path,options);const data=await res.json();if(!res.ok){const error=new Error(data.error||'Request failed.');error.status=res.status;throw error;}return data;}
+async function api(path,body,signal){const options={signal,headers:{'X-CodeHub-Token':token}};if(body!==undefined){options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}const res=await fetch('/api/'+path,options);const data=await res.json();if(!res.ok){const error=new Error(data.error||'Request failed.');error.status=res.status;throw error;}return data;}
 function view(name){if($('tools-menu').matches(':popover-open'))$('tools-menu').hidePopover();document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name+'-view');document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.view===name));$('page-title').textContent={workspace:'Chats',history:'Task history',models:'Models & hardware',usage:'Usage & limits',guide:'Quick guide',accounts:'Accounts'}[name];if(name==='history')renderHistory(true);document.body.classList.toggle('chat-open',name==='workspace'&&!!conversation);}
 document.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>view(el.dataset.view)));
 function currentProject(){return conversation?conversationProject:$('project').value;}
@@ -101,13 +101,26 @@ $('history-search').addEventListener('input',filterHistory);
 for(const id of ['history-status','history-route'])$(id).addEventListener('change',filterHistory);
 $('history-previous').addEventListener('click',()=>{historyOffset=Math.max(0,historyOffset-20);renderHistory(true);});
 $('history-next').addEventListener('click',()=>{historyOffset+=20;renderHistory(true);});
+async function refreshSidebar(){
+  if(sidebarBusy||deletingChat||!token)return;
+  sidebarBusy=true;const epoch=historyEpoch;
+  try{
+    const tree=await api('projects',undefined,AbortSignal.timeout(12000));
+    if(epoch!==historyEpoch)return;
+    renderTree(tree.projects);$('sidebar-status').hidden=true;
+  }catch(error){
+    if(epoch!==historyEpoch)return;
+    $('sidebar-status').textContent='Saved chats could not load. Retrying…';$('sidebar-status').hidden=false;
+  }finally{sidebarBusy=false;if(epoch!==historyEpoch&&!deletingChat)refreshSidebar();}
+}
 async function refresh(){
+  refreshSidebar();
   if(refreshBusy||deletingChat||!token)return;
   refreshBusy=true;const epoch=historyEpoch;
   try{
-    const [s,list,tree]=await Promise.all([api('status'),api('tasks'),api('projects')]);
+    const [s,list]=await Promise.all([api('status'),api('tasks')]);
     if(epoch!==historyEpoch)return;
-    renderTree(tree.projects);tasks=list.tasks;
+    tasks=list.tasks;
     $('run-task').disabled=tasks.some(t=>activeStates.includes(t.status));renderStatus(s);
     if(!selected){const running=tasks.find(t=>conversation&&t.conversation===conversation&&activeStates.includes(t.status));if(running)selected=running.id;}
     if(selected){const id=selected;try{const detail=await api('tasks/'+id);if(epoch!==historyEpoch)return;if(selected===id)renderTask(detail);}catch(error){if(epoch!==historyEpoch)return;if(error.status===404){if(selected===id){selected=null;renderTask(null);}}else throw error;}}

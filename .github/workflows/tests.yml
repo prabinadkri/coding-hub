@@ -25,3 +25,8 @@ jobs:
           GSK_RENDERER: cairo
           GTK_A11Y: none
         run: xvfb-run -a dbus-run-session -- /usr/bin/python3 tools/check_desktop_ui.py --output "$RUNNER_TEMP/coding-hub-ui"
+      - name: Validate saved sidebar on cold startup
+        env:
+          GSK_RENDERER: cairo
+          GTK_A11Y: none
+        run: xvfb-run -a dbus-run-session -- /usr/bin/python3 tools/check_startup_ui.py
