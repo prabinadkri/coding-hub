@@ -42,3 +42,12 @@ Open Usage & limits in the browser or Usage in the app.
 CLI: codehub quota --provider free
 Free-model remaining allowance is not reported. Local usage is not the provider quota.
 Expected daily reset: 00:00 UTC (05:45 Nepal); provider Retry-After takes precedence.
+
+WORKSPACE NAVIGATION
+Chats: project, conversation, route, and message composer.
+Task history: previous runs and their live output.
+Models & hardware: cloud agents, local Qwen, GPU, and memory.
+Usage & limits: provider quotas, free-model observations, and reset times.
+Project memory: persistent instructions and pinned requirements.
+
+The desktop app and browser share projects and saved conversations.

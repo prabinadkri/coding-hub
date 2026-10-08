@@ -9,6 +9,8 @@
 - `free_quota.py`: read-only OpenCode usage metadata, rate-limit observations, and expected UTC reset timing.
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
 - `desktop.py`: native GTK 4 application and project/chat navigation.
+- `assets/desktop.css`: native GTK theme.
+- `tools/check_desktop_ui.py`: isolated native layout and interaction validation.
 - `assets/`: browser interface, with no build step or third-party scripts.
 
 ## Development commands

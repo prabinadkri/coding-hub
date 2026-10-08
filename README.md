@@ -6,6 +6,12 @@ Coding Hub brings Antigravity, verified free OpenCode models, and Ollama into on
 
 ![Coding Hub dashboard](docs/dashboard.jpg)
 
+The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar.
+
+![Native Linux usage page with sample data](docs/desktop-usage.png)
+
+*Native GTK layout preview with synthetic usage data. Actual values come from your providers and local history.*
+
 ## What you get
 
 - Project → chat navigation in the native app and browser, with saved messages, follow-up replies, earlier-message loading, live output, cancellation, and draft recovery.
@@ -139,7 +145,7 @@ A synthetic validation indexed 10,000 small source files in about 4.7 seconds on
 
 ## Antigravity quota
 
-The browser quota card and the native app's **Usage** tab show remaining percentages, provider reset times, countdowns, and the last successful check. You can refresh manually or use:
+The browser quota card and the native app's **Usage & limits** page show remaining percentages, provider reset times, countdowns, and the last successful check. You can refresh manually or use:
 
 ```bash
 codehub quota                      # All providers
@@ -154,7 +160,7 @@ The hub invokes `agy -p /usage --output-format json`. This is Antigravity's own 
 
 ![Coding Hub usage and limits](docs/usage.jpg)
 
-Open **Usage & limits** in the browser sidebar or **Usage** in the native app. Space Bunny, LongCat 2.5 Preview, and Big Pickle each show today's locally observed AI responses and tokens, with input, output, reasoning, and cache details. The same data is available with `codehub quota --provider free`.
+Open **Usage & limits** in the browser sidebar or **Usage & limits** in the native app. Space Bunny, LongCat 2.5 Preview, and Big Pickle each show today's locally observed AI responses and tokens, with input, output, reasoning, and cache details. The same data is available with `codehub quota --provider free`.
 
 **Remaining allowance is shown as “Not reported.”** The current free-model integration has no public remaining-quota endpoint. Counts read from OpenCode's local database are not the provider's request counter: retries, traffic from other devices, and shared public-IP usage may be missing. A free model is not an unlimited model.
 
@@ -191,6 +197,14 @@ python3 -m unittest discover -p 'test_*.py' -v
 python3 hub.py web
 ```
 
-The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS.
+The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all five pages at two window widths, and checks conversation navigation, task history, memory loading, and refresh behavior without sending model prompts.
+
+To run that Linux UI check (requires GTK 4, PyGObject, Xvfb, and a session bus):
+
+```bash
+xvfb-run -a dbus-run-session -- python3 tools/check_desktop_ui.py --output /tmp/coding-hub-ui
+```
+
+These renderings use an isolated temporary state directory and do not read your saved chats or provider credentials.
 
 Licensed under [MIT](LICENSE).

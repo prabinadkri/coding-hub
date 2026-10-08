@@ -1,0 +1,48 @@
+window { background: #f5f7f2; color: #253c32; font-family: Inter, Cantarell, sans-serif; font-size: 13px; }
+headerbar { background: #fafbf8; border-bottom: 1px solid #e1e7dd; box-shadow: none; min-height: 48px; }
+headerbar button { background: transparent; box-shadow: none; }
+.header-title { font-size: 12px; font-weight: 600; color: #68786e; }
+.heading { font-size: 28px; font-weight: 750; letter-spacing: -0.5px; }
+.brand { font-size: 21px; font-weight: 750; }
+.brand-caption { font-size: 8px; letter-spacing: 1.6px; color: #b0c5b7; }
+.section { font-size: 10px; font-weight: 700; letter-spacing: 1.3px; color: #77887b; }
+.section-title { font-size: 16px; font-weight: 650; }
+.muted { color: #718074; font-size: 12px; }
+.footnote { color: #81907f; font-size: 11px; }
+.value { font-weight: 600; }
+.page { padding: 28px 32px; }
+.sidebar { background: #1e342d; color: #eaf0e6; padding: 25px 16px 18px; }
+.sidebar .section { color: #8fa99a; font-size: 9px; padding: 6px 8px; }
+.sidebar button { color: #bfcec3; background: transparent; border: 0; padding: 10px 12px; box-shadow: none; font-weight: 400; }
+.sidebar button:hover { background: #2a4639; color: #ffffff; }
+.sidebar button.selected, .sidebar button.active-chat { background: #304b3d; color: #edf4e6; }
+.sidebar button.new-chat { background: #dfedcb; color: #233c29; font-weight: 700; border-radius: 10px; padding: 13px; }
+.sidebar .muted, .sidebar-foot { color: #9db6a6; font-size: 11px; }
+.sidebar expander title { padding: 10px 4px; font-size: 12px; font-weight: 600; }
+.sidebar expander button { font-size: 11px; padding: 8px 10px; }
+button { background: #ffffff; border: 1px solid #dce4d7; border-radius: 8px; padding: 9px 14px; box-shadow: none; color: #425746; }
+button:hover { background: #edf3e5; border-color: #b7cbaa; }
+button:disabled { opacity: 0.45; }
+button.primary { background: #315940; border-color: #315940; color: #ffffff; font-weight: 650; }
+button.primary:hover { background: #244630; }
+button.danger { color: #964c44; }
+button:focus-visible, entry:focus-within, .input-frame:focus-within { outline: 2px solid #97b683; outline-offset: 2px; }
+entry { background: #fafbf8; border: 1px solid #e0e6db; border-radius: 8px; padding: 9px; box-shadow: none; }
+.card { background: #ffffff; border: 1px solid #e0e6da; border-radius: 15px; padding: 21px; }
+.history-item { padding: 20px; border-radius: 14px; }
+.input-frame { border: 1px solid #dfe6d8; border-radius: 9px; background: #fafcf7; }
+textview { padding: 14px; border-radius: 8px; }
+textview, textview text { background: #fafcf7; color: #2a4032; }
+.output, .output text { background: #1e342d; color: #e5efdf; font-size: 12px; }
+.user-message { background: #e5eedb; border-radius: 12px; padding: 18px; }
+.assistant-message { background: #ffffff; border: 1px solid #e0e6da; border-radius: 12px; padding: 18px; }
+.chat-title { font-weight: 700; font-size: 12px; }
+.quota-number { font-size: 25px; font-weight: 700; letter-spacing: -0.4px; }
+.pill { border-radius: 7px; background: #edf3e6; color: #5b7451; font-size: 10px; font-weight: 600; padding: 5px 9px; }
+.notice { background: #eaf1e2; border: 1px solid #d8e4cd; border-radius: 12px; padding: 16px 19px; }
+.error-banner { background: #fff0ea; color: #954b3f; padding: 14px 28px; }
+progressbar trough { background: #edf1e8; border: none; min-height: 6px; border-radius: 6px; }
+progressbar progress { min-width: 0; margin: 0; padding: 0; background: #94b17f; border: none; min-height: 6px; border-radius: 6px; }
+flowboxchild { padding: 0; outline: none; }
+expander title { padding: 8px 0; color: #687b60; }
+separator { background: #e4eadf; min-height: 1px; }

@@ -15,3 +15,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -p 'test_*.py' -v
+  native-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-4.0 xvfb xauth
+      - name: Validate native layouts and navigation
+        env:
+          GSK_RENDERER: cairo
+          GTK_A11Y: none
+        run: xvfb-run -a dbus-run-session -- /usr/bin/python3 tools/check_desktop_ui.py --output "$RUNNER_TEMP/coding-hub-ui"
