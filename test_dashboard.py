@@ -30,6 +30,7 @@ class DashboardTests(unittest.TestCase):
         self.url = f"http://127.0.0.1:{self.server.server_port}"
 
     def tearDown(self):
+        self.server.accounts.close()
         self.manager.close()
         deadline = time.monotonic() + 5
         while self.manager.active() and time.monotonic() < deadline:
@@ -72,8 +73,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.request("/api/tasks", {"project": str(self.project), "prompt": "hello"}, token="wrong")[0], 401)
         self.assertEqual(self.request('/api/free-quota/refresh', {}, token='')[0], 401)
         self.assertEqual(self.manager.list(), [])
-        for endpoint in ('/api/projects', '/api/project', '/api/conversation'):
+        for endpoint in ('/api/projects', '/api/project', '/api/conversation', '/api/changes'):
             self.assertEqual(self.request(endpoint, token='')[0], 401)
+
+    def test_account_endpoints_require_token_and_reject_arbitrary_provider(self):
+        for endpoint in ('/api/accounts/start', '/api/accounts/input', '/api/accounts/close'):
+            self.assertEqual(self.request(endpoint, {}, token='')[0], 401)
+        self.assertEqual(self.request('/api/accounts/session?id=example', token='')[0], 401)
+        self.assertEqual(self.request('/api/accounts/start', {'provider':'shell'})[0], 400)
+        self.assertEqual(self.request('/api/accounts/session?id=missing')[0], 400)
+        self.assertIsNone(self.server.accounts.session)
 
     def test_project_memory_and_conversations_are_scoped_to_the_selected_project(self):
         _, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Initial question'})

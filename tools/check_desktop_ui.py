@@ -28,8 +28,10 @@ def main():
     now = time.time()
     usage = {'responses': 12, 'total_tokens': 24850, 'tokens': {'input': 14000, 'output': 2850, 'reasoning': 0, 'cache_read': 8000, 'cache_write': 0}}
     status = {'checking': False, 'programs': {'agy': True, 'opencode': True, 'ollama': True},
-              'free_models': list(hub.FREE_MODELS), 'local_ready': True, 'local_model': hub.LOCAL_AGENT_MODEL,
-              'gpu': {'name': 'NVIDIA GeForce GTX 1650', 'used_mb': 128, 'total_mb': 4096},
+              'models': [hub.LOCAL_AGENT_MODEL, 'qwen3:8b'], 'free_models': list(hub.FREE_MODELS), 'local_ready': True, 'local_model': hub.LOCAL_AGENT_MODEL,
+              'gpu': {'name': 'NVIDIA GeForce GTX 1650', 'used_mb': 128, 'total_mb': 4096, 'utilization': 17},
+              'cpu': 24.5, 'sampled_at': now, 'accounts': [{'id': p, 'installed': True} for p in ('antigravity','claude','openai')],
+              'provider_models': {'claude': [{'id':'sonnet','name':'Claude Sonnet'}]},
               'ram': {'available_gb': 10.9, 'total_gb': 15.3}, 'loaded': [],
               'quota': {'checked_at': now, 'groups': [
                   {'name': 'Gemini Models', 'buckets': [{'remaining_percent': 82.5, 'reset_at': now + 90000}]},
@@ -43,13 +45,19 @@ def main():
             'project': project, 'backend': 'smart', 'created_at': now - 300, 'started_at': now - 290, 'ended_at': now - 230,
             'output': 'Updated the dashboard spacing and navigation.\nValidation passed.'}
     conversation = {'id': 'preview-chat', 'project': project, 'goal': task['prompt'], 'total_turns': 1,
-                    'turns': [{'rowid': 1, 'request': task['prompt'], 'result': 'The dashboard now has clear navigation, grouped metrics, and a focused workspace. Layout checks passed.', 'status': 'completed'}]}
+                    'turns': [{'rowid': 1, 'task': 'preview-task', 'has_review': True, 'request': task['prompt'], 'result': '## Changes\n- Clear navigation and grouped metrics.\n- Compact replies with **persistent memory**.\n\n## Checks\nLayout checks passed.\n\n```python\nprint("Ready to build")\n```', 'status': 'completed'}]}
     requests = []
 
     def api(path, body=None):
         requests.append((path, body))
+        if path == 'accounts/start': return {'id':'preview-signin','running':True,'screen':'Choose Google OAuth to continue','provider':'antigravity','links':[]}
+        if path.startswith('accounts/session'): return {'id':'preview-signin','running':True,'screen':'Choose Google OAuth to continue','links':[]}
+        if path in ('accounts/input','accounts/close'): return {'ok':True}
+        if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
         if path == 'status': return status
-        if path == 'tasks': return {'tasks': [task]}
+        if path == 'tasks':
+            if body: return dict(task, id='preview-send', prompt=body['prompt'], status='running')
+            return {'tasks': [task]}
         if path.startswith('tasks/'): return task
         if path == 'projects': return {'projects': [{'name': 'studio', 'project': project, 'conversations': [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
         if path.startswith('conversation?'): return conversation
@@ -80,7 +88,7 @@ def main():
             assert not app.release_button.get_sensitive()
             for width in (1240, 980):
                 app.window.set_default_size(width, 840)
-                for page in ('workspace', 'usage', 'models', 'history', 'memory'):
+                for page in ('workspace', 'usage', 'models', 'history', 'memory', 'accounts'):
                     app.stack.set_visible_child_name(page)
                     settle()
                     assert app.navigation[page].has_css_class('selected')
@@ -118,6 +126,26 @@ def main():
                 paintable.snapshot(snapshot, app.window.get_width(), app.window.get_height())
                 texture = app.window.get_renderer().render_texture(snapshot.to_node(), None)
                 texture.save_to_png(str(args.output / f'desktop-chat-{width}.png'))
+            app.open_changes('preview-task')
+            settle()
+            assert app.review_window.get_visible()
+            paintable = Gtk.WidgetPaintable.new(app.review_window)
+            snapshot = Gtk.Snapshot()
+            paintable.snapshot(snapshot, app.review_window.get_width(), app.review_window.get_height())
+            texture = app.review_window.get_renderer().render_texture(snapshot.to_node(), None)
+            texture.save_to_png(str(args.output / 'desktop-changes.png'))
+            app.review_window.close()
+            app.window.present()
+            settle()
+            app.route.set_selected(2)
+            assert app.model_row.get_visible()
+            app.model_picker.set_selected(1)
+            assert app.form()['model'] == hub.FREE_MODELS[0]
+            app.route.set_selected(3)
+            app.model_picker.set_selected(2)
+            assert app.form()['model'] == 'qwen3:8b'
+            app.route.set_selected(0)
+            assert app.form()['model'] is None
             app.project.set_text('/workspace/other-project')
             assert app.form()['project'] == project, 'A follow-up must keep its conversation project'
             app.stack.set_visible_child_name('memory')
@@ -143,7 +171,61 @@ def main():
             assert detail.get_expanded(), 'Refresh collapsed the token breakdown'
             app.render_free_quota({'models': [], 'error': 'Usage unavailable', 'local': {}})
             assert 'unavailable' in app.free_quota_checked.get_text()
-            print(json.dumps({'rendered': 12, 'native_workflows': 'passed', 'provider_requests': 0}))
+            app.open_chat(project, 'preview-chat')
+            settle()
+            conversation['turns'] = [dict(conversation['turns'][0], rowid=i, request=f'Question {i}', result='A detailed answer. ' * 18) for i in range(1,25)]
+            conversation['total_turns'] = 24
+            app.render_messages(conversation)
+            settle()
+            adj = app.chat_scroll.get_vadjustment()
+            assert adj.get_upper() > adj.get_page_size(), 'Long conversation should scroll'
+            assert abs(adj.get_value()-(adj.get_upper()-adj.get_page_size())) < 2, 'Open chat must show newest message'
+            adj.set_value(0)
+            assert not app.follow_chat
+            conversation['turns'].append(dict(conversation['turns'][0], rowid=25))
+            conversation['total_turns'] = 25
+            app.render_messages(conversation)
+            settle()
+            assert adj.get_value() < 2, 'Refresh must not pull someone away from older messages'
+            assert app.latest_button.get_visible()
+            app.jump_to_latest()
+            settle()
+            assert abs(adj.get_value()-(adj.get_upper()-adj.get_page_size())) < 2
+            assert app.chat_scroll.get_height() > app.composer.get_height()
+            assert app.prompt_scroll.get_height() < 80, 'Reply input should start compact'
+            app.prompt.grab_focus()
+            app.prompt.get_buffer().set_text('Keyboard shortcut test')
+            assert app.keyboard.get_propagation_phase() == Gtk.PropagationPhase.CAPTURE
+            sent_before = len([p for p,b in requests if p=='tasks' and b])
+            handled = app.keyboard.emit('key-pressed', Gdk.KEY_Return, 0, Gdk.ModifierType.CONTROL_MASK)
+            settle()
+            assert handled, 'Ctrl+Enter must be intercepted before TextView consumes it'
+            assert len([p for p,b in requests if p=='tasks' and b]) == sent_before+1
+            assert not app.prompt.get_buffer().get_char_count()
+            app.theme_switch.set_active(True)
+            assert json.loads(app.preferences_path.read_text())['dark'] is True
+            assert app.window.has_css_class('dark')
+            for page in ('workspace','models','accounts'):
+                app.stack.set_visible_child_name(page)
+                settle()
+                paintable = Gtk.WidgetPaintable.new(app.window)
+                snap = Gtk.Snapshot()
+                paintable.snapshot(snap, app.window.get_width(), app.window.get_height())
+                texture = app.window.get_renderer().render_texture(snap.to_node(), None)
+                texture.save_to_png(str(args.output / f'desktop-dark-{page}.png'))
+            app.route.set_selected(1)
+            app.start_signin('antigravity')
+            settle()
+            assert app.signin_panel.get_visible()
+            app.signin_input.set_text('synthetic-code')
+            app.signin_text()
+            settle()
+            assert not app.signin_input.get_text()
+            assert any(p=='accounts/input' and b.get('text')=='synthetic-code' for p,b in requests)
+            app.close_signin()
+            settle()
+            assert not app.signin_panel.get_visible()
+            print(json.dumps({'rendered': 18, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

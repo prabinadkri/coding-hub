@@ -4,13 +4,15 @@
 
 Coding Hub brings Antigravity, verified free OpenCode models, and Ollama into one workspace with **terminal, native Linux app, and web interfaces**. Choose a project, describe a task, and follow its progress. Keep inference local when you want to, or use a cloud agent for larger work.
 
-![Coding Hub dashboard](docs/dashboard.jpg)
+![Full-width browser conversation in dark mode, with sample data](docs/web-chat-dark.png)
 
-The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar. Existing chats hide the project picker, align your messages to the right and assistant replies to the left, and keep route settings in a compact disclosure. New chats show project selection. The header’s Project memory button opens the shared instructions for the current project.
+The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, **Accounts**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar. Existing chats hide the project picker, align your messages to the right and assistant replies to the left, and keep route settings in a compact disclosure. New chats show project selection. The header’s Project memory button opens the shared instructions for the current project.
 
 ![Native Linux conversation with sample data](docs/desktop-chat.png)
 
 *Native GTK conversation preview with synthetic messages. Actual values come from your providers and local history.*
+
+![Native dark appearance with sample messages](docs/desktop-dark.png)
 
 ## What you get
 
@@ -20,8 +22,75 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 - Opt-in Smart routing: Antigravity makes a short plan and reviews evidence; verified free models or local Qwen perform the work, with measured manager token usage and at most two manager calls.
 - Automatic fallback: Antigravity → currently verified free OpenCode models → local Qwen3 8B. A handoff preserves the original task and partial changes.
 - NVIDIA status, actual model offload, memory usage, and a button to release the local model from memory.
-- A lightweight Python standard-library backend and plain HTML/CSS/JavaScript. The CLI and web version need no third-party Python packages or npm build.
+- A lightweight Python backend and plain HTML/CSS/JavaScript, with no package installation or npm build required. Sign-in terminal rendering bundles unmodified `pyte` and `wcwidth`; source and licenses are in `vendor/`.
 - A native Linux app window using GTK 4, with its own icon, plus a terminal menu and command-line interface.
+
+## How to use the app, browser, and CLI
+
+| Interface | Start | Use it for |
+| --- | --- | --- |
+| Linux app | Applications → Coding Hub, or `codehub app` | Daily project chats, sign-in, quotas, and hardware |
+| Browser | `codehub web`, or **Open web** in the app | The same workspace in a browser |
+| Terminal | `codehub`, `codehub chat`, or `codehub run` | Keyboard workflows and individual tasks |
+
+### Linux app
+
+1. Open **Coding Hub** from Applications. Pin that entry to your dock if desired. Its desktop ID and icon match the running GTK window.
+2. Choose **New chat**, select an existing project folder, and describe the task. Existing chats keep their original project.
+3. Expand **Chat settings**. Select a route and then a model. Antigravity lists models available to your Google account, including any Claude/GPT options. Free cloud shows currently verified free models; Local shows installed Ollama models. Automatic and Smart select models for their stages.
+4. Leave **Allow edits & commands** off for explanations. Enable it to let the agent modify project files and run commands.
+5. Click **Send message** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
+6. Replies format headings, lists, inline code, and code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
+7. Toggle **Dark** in the title bar to save your appearance preference. **Project memory** opens shared requirements for the current project.
+8. **Models & hardware** shows CPU/GPU activity, RAM/VRAM, and loaded model placement. “GPU available” means the driver works; “GPU acceleration in use” means Ollama reports model data on the GPU. GPU activity includes other applications. Samples normally refresh every 3–6 seconds.
+
+### Browser
+
+Run `codehub web` on the machine hosting your models and use the page it opens. Its launch URL includes a temporary connection token. The app’s **Open web** button also opens an authenticated page.
+
+Use the same **New chat**, **Chat settings**, **Accounts**, **Usage & limits**, and **Project memory** controls. Press **Ctrl+Enter** or **⌘+Enter** from the message box to send. Code blocks have a **Copy** button. **Dark mode** saves a browser-specific preference. The desktop web layout fills the available width and height, with a stationary reply composer.
+
+App and web share chats and running tasks; drafts and theme preferences are separate. The server stays on loopback. For another computer, use an SSH tunnel rather than exposing it publicly. OAuth browser callbacks must reach the machine running the CLI; use a provider’s headless option when offered over a tunnel.
+
+### Sign-in and accounts
+
+Open **Accounts → Antigravity → Sign in / manage**. Use **Google OAuth** for personal access. Complete authentication on Google’s own page, return to the panel, and choose **Done / close** to refresh status. The first launch may ask you to trust the hub’s dedicated, empty account setup folder. Use **Reconnect Google** when you want to sign out of an expired session and authenticate again.
+
+The panel supplies arrow, Enter, Tab, and Escape controls for native provider prompts, plus a masked field for a requested code or response. Temporary sign-in output is not saved to chat history. Credentials stay in the provider CLI’s own storage.
+
+Optional separate subscriptions:
+
+- **Claude:** install the [official Claude CLI](https://code.claude.com/docs/en/overview), then sign in from Accounts. Choose **Claude account** in Chat settings.
+- **ChatGPT:** sign in through the installed [OpenCode provider flow](https://opencode.ai/docs/providers/#openai). Choose its ChatGPT subscription option, then **ChatGPT account** and a model in Chat settings. API-key billing is not enabled by this route.
+
+These routes use your existing plan’s limits and model eligibility. They are never selected by Automatic or Smart and do not purchase a subscription. Separate Claude/ChatGPT quotas are not exposed by this integration; consult those providers’ own account interfaces. Antigravity’s included Claude/GPT quota remains visible under **Usage & limits**.
+
+### CLI
+
+```bash
+codehub                              # Menu; option 8 starts a conversation
+codehub chat --project ~/my-project
+codehub chat --project ~/my-project --backend local --model coding-hub-qwen:8b
+codehub chat --project ~/my-project --continue
+codehub models --backend antigravity  # Account model choices
+codehub models --backend free         # Fresh zero-price check
+codehub models --backend local        # Installed Ollama models
+codehub run --project ~/my-project --backend free --model big-pickle "Explain the tests"
+codehub run --project ~/my-project --apply "Fix the failing tests and run the relevant checks"
+codehub login --provider antigravity
+codehub login --provider claude
+codehub login --provider openai
+```
+
+Inside `codehub chat`:
+
+- `:models` lists choices for the current route.
+- `:model MODEL_ID` selects one; `:model default` restores that route’s default.
+- `:route local`, `:route free`, `:route antigravity`, `:route claude`, or `:route openai` changes route and clears the model choice. Automatic and Smart are also supported. Use `:models` afterward.
+- `:new` starts a conversation in the same project, `:memory` shows shared requirements, and `:quit` exits.
+- Ctrl+C cancels work. Partial edits remain available for review.
+
+Interactive terminals show concise progress and a formatted final answer. Raw provider/tool details remain in the private task log. Redirected output stays plain text for scripts and the dashboard. `codehub open --backend local --project ~/my-project` opens the underlying agent’s full terminal interface.
 
 ## Install
 
@@ -49,7 +118,7 @@ python3 setup.py --local
 
 Setup downloads Qwen3 8B (about 5.2 GB), creates the `coding-hub-qwen:8b` alias without duplicating its weights, and adds a Linux application launcher. Existing models are preserved. To install the launcher without downloading a model, run `python3 setup.py`.
 
-Run `agy` in a terminal and complete your own Google sign-in. The coordinator calls Google's native CLI; it does not extract or proxy account tokens.
+Open **Accounts** in the app or browser to complete your Google sign-in. The coordinator calls the native CLI; it does not extract or proxy account tokens. See the interface guide above for separate Claude/ChatGPT accounts.
 
 ## Use
 
@@ -63,7 +132,7 @@ codehub web   # Dashboard in your browser
 
 If `codehub` is not on your PATH, use `~/.local/bin/codehub` instead. On Linux, **Coding Hub** in the Applications menu and `Coding Hub.sh` open the standalone app. The app icon's context menu also offers the browser and terminal. On macOS, `Coding Hub.command` opens the browser interface.
 
-Choose a project folder and enter your task. Analysis mode is the default. Enable **Allow edits & commands** for implementation. **Fast** selects Flash for Antigravity; **Deep** selects Pro. Free cloud and local routes use their own configured models.
+Choose a project folder and enter your task. Analysis mode is the default. Enable **Allow edits & commands** for implementation. **Fast** selects Flash for Antigravity; **Deep** selects Pro. Expand **Chat settings** to choose a specific model for Antigravity, Free cloud, or Local. Explicit free-model choices still require fresh zero-price verification before execution.
 
 The app and browser share one background server and task history; reopening the app raises its existing window. The terminal uses the same routing engine, models, project memory, and saved conversations. CLI chats appear under their project in the app and browser; native CLI run logs remain separate from dashboard task activity.
 
@@ -197,7 +266,7 @@ python3 -m unittest discover -p 'test_*.py' -v
 python3 hub.py web
 ```
 
-The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all five pages and an existing conversation at two window widths, and checks message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
+The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all six pages and existing conversations at two window widths, plus dark-mode previews. It checks Ctrl+Enter, scroll following, reading-position preservation, compact composer size, model selection, temporary sign-in controls, theme persistence, message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
 
 To run that Linux UI check (requires GTK 4, PyGObject, Xvfb, and a session bus):
 
@@ -208,3 +277,21 @@ xvfb-run -a dbus-run-session -- python3 tools/check_desktop_ui.py --output /tmp/
 These renderings use an isolated temporary state directory and do not read your saved chats or provider credentials.
 
 Licensed under [MIT](LICENSE).
+
+### Reviewing replies and file changes
+
+Replies use readable Markdown, code blocks, and a **Copy reply** button. The browser also offers **Copy** on each code block. Detailed tool output stays under **Task activity**.
+
+After a new task with **Enable edits** finishes, choose **View changes** under its reply. Select a file to see green added lines, red removed lines, and line numbers in the diff headers. These are before/after snapshots of that task, so earlier edits are not presented as new work. Concurrent edits from another editor can still appear. This viewer is read-only; it does not commit or undo files.
+
+In terminal chat, type `:changes`. Outside chat, run `codehub changes --project /path/to/project`, optionally adding `--task TASK_ID`. The command defaults to the latest saved task. Historical tasks and analysis-only tasks have no change snapshot.
+
+Snapshots cover eligible source files, exclude ignored/sensitive-name/binary files and symlinks, and use bounded scans (5 seconds, 32 MB, 256 KB per file). Reviews show up to 64 files / 200 KB of diffs. Partial coverage is labeled. Reviews and chat history stay in private application state, outside the project; this is not a backup of every file.
+
+![Browser file diff review with sample data](docs/web-changes.png)
+
+### Provider access troubleshooting
+
+A model's **Price verified** status means its published price is zero; it does not guarantee service access. If OpenCode's free service returns “free tier can only be used from within OpenCode” even from the official CLI, choose Antigravity or Local. Related upstream reports include [an official CLI free-tier rejection](https://github.com/anomalyco/opencode/issues/52907). Coding Hub keeps analysis-mode permissions restricted and does not bypass provider access controls.
+
+If Claude reports an expired OAuth session, open **Accounts → Claude → Sign in** and reconnect. “Sign-in saved” only indicates saved sign-in metadata; the provider confirms validity when used. ChatGPT requires an explicit model selection after subscription sign-in.

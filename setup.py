@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Finish local setup without paid accounts or third-party Python packages."""
 import argparse
+import ast
 import json
 import os
 from pathlib import Path
@@ -24,12 +25,14 @@ def configure():
         icon = Path.home() / ".local/share/icons/hicolor/scalable/apps/coding-hub.svg"
         icon.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(hub.ROOT / "assets/icon.svg", icon)
-        application = Path.home() / ".local/share/applications/prabin-coding-hub.desktop"
+        app_id = 'io.github.prabinadkri.CodingHub'
+        shutil.copy2(hub.ROOT / 'assets/icon.svg', icon.with_name(app_id + '.svg'))
+        application = Path.home() / ('.local/share/applications/' + app_id + '.desktop')
         application.parent.mkdir(parents=True, exist_ok=True)
         escaped_path = str(launcher).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
         application.write_text('[Desktop Entry]\nType=Application\nName=Coding Hub\n'
                                'Comment=Cloud coding agents and local Qwen in one launcher\n'
-                               f'Exec="{escaped_path}" app\nTerminal=false\nIcon=coding-hub\n'
+                               f'Exec="{escaped_path}" app\nTerminal=false\nIcon={app_id}\n'
                                'Categories=Development;\nStartupNotify=false\n'
                                'StartupWMClass=io.github.prabinadkri.CodingHub\nActions=Web;Terminal;\n\n'
                                '[Desktop Action Web]\nName=Open in browser\n'
@@ -37,6 +40,24 @@ def configure():
                                '[Desktop Action Terminal]\nName=Open terminal menu\n'
                                f'Exec=x-terminal-emulator -e "{escaped_path}"\n')
         application.chmod(0o755)
+        legacy = application.with_name('prabin-coding-hub.desktop')
+        if legacy.is_file() and 'Name=Coding Hub\n' in legacy.read_text():
+            # Keep an old shortcut working while hiding its duplicate menu entry.
+            legacy.write_text(application.read_text().replace('[Desktop Entry]\n', '[Desktop Entry]\nNoDisplay=true\n', 1))
+            settings_tool = shutil.which('gsettings')
+            if settings_tool:
+                try:
+                    result = subprocess.run([settings_tool, 'get', 'org.gnome.shell', 'favorite-apps'],
+                                            capture_output=True, text=True, timeout=5)
+                    favorites = ast.literal_eval(result.stdout)
+                    if isinstance(favorites, list) and 'prabin-coding-hub.desktop' in favorites:
+                        replacement = [app_id + '.desktop' if item == 'prabin-coding-hub.desktop' else item for item in favorites]
+                        subprocess.run([settings_tool, 'set', 'org.gnome.shell', 'favorite-apps', repr(replacement)], check=True, timeout=5)
+                except (ValueError, SyntaxError, OSError, subprocess.SubprocessError):
+                    print('Existing dock favorite could not be updated automatically. Pin the new Coding Hub entry from Applications.')
+        updater = shutil.which('update-desktop-database')
+        if updater:
+            subprocess.run([updater, str(application.parent)], capture_output=True)
         print("Added Coding Hub and its icon to the applications menu.")
         updater = shutil.which("gtk-update-icon-cache")
         if updater:

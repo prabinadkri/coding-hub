@@ -17,6 +17,7 @@ import webbrowser
 
 import dashboard
 import hub
+from message_format import blocks, inline_markup, clean_reply
 
 
 def ensure_server(port=8765):
@@ -83,7 +84,7 @@ def launch(port=8765):
 def create_application(Gtk, Gdk, Gio, GLib, api, url):
     """Build native widgets independently of transport for isolated UI validation."""
     from gi.repository import Pango
-    routes = ("auto", "antigravity", "free", "local", "smart")
+    routes = ("auto", "antigravity", "free", "local", "smart", "claude", "openai")
 
     class CodingHub(Gtk.Application):
         def __init__(self):
@@ -104,10 +105,18 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.connected = False
             self.memory_project = None
             self.chat_layout = None
+            self.follow_chat = True
+            self.scroll_pending = False
+            self.model_choices = {}
+            self.chosen_models = {}
+            self.model_signature = None
+            self.signin_id = None
+            self.signin_busy = False
             self.last_output = None
             self.quota_signature = None
             self.free_signature = None
             self.draft_path = hub.STATE / "desktop" / "draft.json"
+            self.preferences_path = hub.STATE / 'desktop' / 'preferences.json'
 
         @staticmethod
         def row(spacing=12):
@@ -166,10 +175,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             if self.window:
                 self.window.present()
                 return
-            Gtk.Window.set_default_icon_name('coding-hub')
+            Gtk.Window.set_default_icon_name('io.github.prabinadkri.CodingHub')
             self.window = Gtk.ApplicationWindow(application=self, title='Coding Hub')
             self.window.set_default_size(1240, 840)
-            self.window.set_icon_name('coding-hub')
+            self.window.set_icon_name('io.github.prabinadkri.CodingHub')
             self.window.connect('close-request', self.closed)
             css = Gtk.CssProvider()
             css.load_from_path(str(hub.ROOT / 'assets' / 'desktop.css'))
@@ -183,8 +192,25 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.connection.set_wrap(False)
             header.pack_start(self.connection)
             header.pack_end(self.button('Open web ↗', lambda *_: webbrowser.open(url)))
+            self.theme_switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+            self.theme_switch.set_tooltip_text('Dark mode')
+            theme_row = self.row(7)
+            theme_label = self.label('Dark', 'muted')
+            theme_label.set_wrap(False)
+            theme_row.append(theme_label)
+            theme_row.append(self.theme_switch)
+            header.pack_end(theme_row)
+            self.theme_switch.connect('notify::active', self.theme_changed)
+            try:
+                dark = bool(json.loads(self.preferences_path.read_text()).get('dark', False))
+            except (OSError, ValueError, TypeError):
+                dark = False
+            self.theme_switch.set_active(dark)
+            self.theme_changed()
             self.window.set_titlebar(header)
             keyboard = Gtk.EventControllerKey()
+            keyboard.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            self.keyboard = keyboard
             keyboard.connect('key-pressed', self.shortcut)
             self.window.add_controller(keyboard)
             shell = self.row(0)
@@ -211,6 +237,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 ('history', 'Task history', 'document-open-recent-symbolic'),
                 ('models', 'Models & hardware', 'computer-symbolic'),
                 ('usage', 'Usage & limits', 'view-statistics-symbolic'),
+                ('accounts', 'Accounts', 'avatar-default-symbolic'),
                 ('memory', 'Project memory', 'accessories-text-editor-symbolic')):
                 button = self.button('', lambda _, page=name: self.stack.set_visible_child_name(page), 'nav-item')
                 row = self.row(10)
@@ -242,6 +269,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.chat_title = self.page_headings['workspace']
             self.chat_subtitle = self.page_subtitles['workspace']
             self.workspace_body = body
+            body.set_spacing(10)
             self.chat_memory_button = self.button('Project memory', lambda *_: self.stack.set_visible_child_name('memory'))
             self.page_header_rows['workspace'].append(self.chat_memory_button)
             self.project_card = self.card()
@@ -255,12 +283,21 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.project_card.append(project_row)
             body.append(self.project_card)
             self.chat_messages = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            self.chat_scroll = Gtk.ScrolledWindow(min_content_height=160, max_content_height=460, propagate_natural_height=True)
+            self.chat_scroll = Gtk.ScrolledWindow(min_content_height=120, vexpand=True)
             self.chat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             self.chat_scroll.set_child(self.chat_messages)
             self.chat_scroll.set_visible(False)
+            adjustment = self.chat_scroll.get_vadjustment()
+            adjustment.connect('value-changed', self.chat_scrolled)
+            adjustment.connect('changed', self.chat_resized)
             body.append(self.chat_scroll)
-            composer = self.card(14)
+            self.latest_button = self.button('↓  Latest messages', self.jump_to_latest)
+            self.latest_button.set_halign(Gtk.Align.CENTER)
+            self.latest_button.set_visible(False)
+            body.append(self.latest_button)
+            composer = self.card(8)
+            composer.add_css_class('composer')
+            self.composer = composer
             self.composer_title = self.label('Your message', 'section-title')
             composer_heading = self.row()
             self.composer_title.set_hexpand(True)
@@ -269,7 +306,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             composer.append(composer_heading)
             self.prompt = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
             self.prompt.set_tooltip_text('Describe what you want to build, fix, or understand')
-            self.prompt_scroll = Gtk.ScrolledWindow(min_content_height=130)
+            self.prompt_scroll = Gtk.ScrolledWindow(min_content_height=52, max_content_height=120,
+                                                   propagate_natural_height=True)
+            self.prompt_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             prompt_scroll = self.prompt_scroll
             prompt_scroll.add_css_class('input-frame')
             prompt_scroll.set_child(self.prompt)
@@ -278,15 +317,22 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             route_label = self.label('Route', 'muted')
             route_label.set_wrap(False)
             options.append(route_label)
-            self.route = Gtk.DropDown.new_from_strings(['Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart'])
+            self.route = Gtk.DropDown.new_from_strings(['Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart', 'Claude account', 'ChatGPT account'])
             self.route.set_tooltip_text('Coding route')
             self.route.connect('notify::selected', self.route_changed)
-            self.quality = Gtk.DropDown.new_from_strings(['Fast · Flash', 'Deep · Pro'])
+            self.quality = Gtk.DropDown.new_from_strings(['Fast', 'Deep'])
             self.quality.set_tooltip_text('Antigravity quality')
             options.append(self.route)
             options.append(self.quality)
             settings_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             settings_body.append(options)
+            self.model_row = self.row()
+            self.model_row.append(self.label('Model', 'muted'))
+            self.model_picker = Gtk.DropDown.new_from_strings(['Use route default'])
+            self.model_picker.set_hexpand(True)
+            self.model_picker.connect('notify::selected', self.model_changed)
+            self.model_row.append(self.model_picker)
+            settings_body.append(self.model_row)
             self.hint = self.label('', 'muted')
             settings_body.append(self.hint)
             self.chat_settings = Gtk.Expander(label='Chat settings', expanded=True)
@@ -308,14 +354,16 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             body.append(self.activity)
             self.output = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
             self.output.add_css_class('output')
-            output_scroll = Gtk.ScrolledWindow(min_content_height=220, vexpand=True)
+            output_scroll = Gtk.ScrolledWindow(min_content_height=100, max_content_height=160)
             output_scroll.set_child(self.output)
             self.output_details = Gtk.Expander(label='Live task output')
             self.output_details.set_child(output_scroll)
             body.append(self.output_details)
-            body.append(self.label('Closing this window keeps tasks running. Your chats are shared with the web interface.', 'footnote'))
+            self.chat_footnote = self.label('App and web share your chats. Closing this window keeps tasks running.', 'footnote')
+            body.append(self.chat_footnote)
             self.build_history_page()
             self.build_models_page()
+            self.build_accounts_page()
             self.build_memory_page()
             self.build_quota_page()
             self.stack.set_visible_child_name('workspace')
@@ -329,6 +377,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.browse_button.set_sensitive(not bool(self.conversation))
                 self.prompt.get_buffer().set_text(draft.get("prompt", ""))
                 self.route.set_selected(routes.index(draft.get("backend", "auto")))
+                if draft.get('model'):
+                    self.chosen_models[draft.get('backend')] = draft['model']
                 self.quality.set_selected(1 if draft.get("quality") == "deep" else 0)
                 self.edits.set_active(draft.get("mode") == "build")
             except (OSError, ValueError, TypeError):
@@ -340,6 +390,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.refresh()
             GLib.timeout_add_seconds(3, self.refresh)
             GLib.timeout_add_seconds(5, self.save_draft)
+            GLib.timeout_add(600, self.poll_signin)
 
         def background(self, work, callback):
             future = self.executor.submit(work)
@@ -362,13 +413,50 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
 
         def shortcut(self, controller, key, code, modifiers):
             if modifiers & Gdk.ModifierType.CONTROL_MASK:
-                if key == Gdk.KEY_Return and self.run_button.get_sensitive():
-                    self.run_task()
-                    return True
+                if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                    if self.stack.get_visible_child_name() == 'workspace' and self.window.get_focus() == self.prompt:
+                        if self.run_button.get_sensitive():
+                            self.run_task()
+                        return True
                 if key in (Gdk.KEY_n, Gdk.KEY_N):
                     self.new_task()
                     return True
             return False
+
+        def theme_changed(self, *_):
+            dark = self.theme_switch.get_active()
+            Gtk.Settings.get_default().set_property('gtk-application-prefer-dark-theme', dark)
+            if dark:
+                self.window.add_css_class('dark')
+            else:
+                self.window.remove_css_class('dark')
+            hub.save_json(self.preferences_path, {'dark': dark})
+
+        def chat_scrolled(self, adjustment):
+            if not self.scroll_pending:
+                self.follow_chat = adjustment.get_upper() - adjustment.get_page_size() - adjustment.get_value() < 48
+                self.latest_button.set_visible(not self.follow_chat and bool(self.conversation))
+
+        def chat_resized(self, *_):
+            if self.follow_chat:
+                self.queue_chat_scroll()
+
+        def queue_chat_scroll(self):
+            if self.scroll_pending:
+                return
+            self.scroll_pending = True
+            # Run after GTK has allocated the updated message widgets.
+            def scroll():
+                adjustment = self.chat_scroll.get_vadjustment()
+                adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+                self.scroll_pending = False
+                self.latest_button.set_visible(False)
+                return False
+            GLib.idle_add(scroll, priority=GLib.PRIORITY_LOW)
+
+        def jump_to_latest(self, *_):
+            self.follow_chat = True
+            self.queue_chat_scroll()
 
         def form(self):
             buffer = self.prompt.get_buffer()
@@ -376,6 +464,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                     "prompt": buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True),
                     "backend": routes[self.route.get_selected()],
                     "quality": "deep" if self.quality.get_selected() == 1 else "fast",
+                    "model": self.chosen_models.get(routes[self.route.get_selected()]) if routes[self.route.get_selected()] in ('antigravity', 'claude', 'openai', 'free', 'local') else None,
                     "mode": "build" if self.edits.get_active() else "analysis", "conversation": self.conversation}
 
         def current_project(self):
@@ -387,7 +476,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.project.set_editable(not existing)
             self.browse_button.set_sensitive(not existing)
             self.composer_title.set_text('Reply' if existing else 'Your message')
-            self.prompt_scroll.set_min_content_height(85 if existing else 130)
+            self.prompt_scroll.set_min_content_height(48 if existing else 72)
+            self.chat_footnote.set_visible(not existing)
             if self.chat_layout != existing:
                 self.chat_settings.set_expanded(not existing)
                 self.output_details.set_expanded(False)
@@ -410,7 +500,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
         def route_changed(self, *_):
             selected = self.route.get_selected()
             if hasattr(self, 'chat_settings'):
-                self.chat_settings.set_label('Chat settings · ' + ('Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart')[selected])
+                self.chat_settings.set_label('Chat settings · ' + ('Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart', 'Claude account', 'ChatGPT account')[selected])
             if hasattr(self, "quality"):
                 self.quality.set_sensitive(routes[selected] in ("auto", "antigravity", "smart"))
             if hasattr(self, "hint"):
@@ -419,8 +509,37 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                     "Uses your Google sign-in. Fast selects Flash; Deep selects Pro. Provider quotas apply.",
                     "Checks current zero-cost pricing before each run. Provider quotas apply.",
                     "Qwen3 8B runs on this computer with 16K context. Best for focused tasks.",
-                    "Antigravity plans and reviews; free/local workers implement. At most 2 manager calls. Savings and equal quality are not guaranteed; 6,000-byte request limit."
+                    "Antigravity plans and reviews; free/local workers implement. At most 2 manager calls. Savings and equal quality are not guaranteed; 6,000-byte request limit.",
+                    "Uses your separate Claude subscription through its official CLI. Connect in Accounts first; your plan's limits apply.",
+                    "Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model; availability depends on your plan."
                 ][selected])
+            if hasattr(self, 'model_row'):
+                self.render_model_picker()
+
+        def render_model_picker(self):
+            route = routes[self.route.get_selected()]
+            choices = self.model_choices.get(route, [])
+            selected = self.chosen_models.get(route)
+            if selected and not any(m['id'] == selected for m in choices):
+                choices = [{'id': selected, 'name': selected}] + choices
+            keys = [None] + [m['id'] for m in choices]
+            signature = (route, keys)
+            self.model_row.set_visible(route in ('antigravity', 'claude', 'openai', 'free', 'local'))
+            if signature == self.model_signature:
+                return
+            self.model_signature = signature
+            self.model_keys = keys
+            self.setting_models = True
+            self.model_picker.set_model(Gtk.StringList.new(['Choose a model' if route == 'openai' else 'Use route default'] + [m['name'] for m in choices]))
+            self.model_picker.set_selected(keys.index(selected) if selected in keys else 0)
+            self.setting_models = False
+
+        def model_changed(self, *_):
+            if getattr(self, 'setting_models', True):
+                return
+            selected = self.model_picker.get_selected()
+            if selected < len(self.model_keys):
+                self.chosen_models[routes[self.route.get_selected()]] = self.model_keys[selected]
 
         def browse(self, *_):
             dialog = Gtk.FileChooserNative.new("Choose a project", self.window,
@@ -440,6 +559,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.folder_dialog = dialog
 
         def new_task(self, *_):
+            self.follow_chat = True
+            self.latest_button.set_visible(False)
             self.conversation = None
             self.conversation_project = ''
             self.message_signature = None
@@ -462,10 +583,15 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
 
         def run_task(self, *_):
             data = self.form()
+            if not data['prompt'].strip():
+                self.prompt.grab_focus()
+                return
             self.save_draft()
             self.error.set_visible(False)
             self.run_button.set_sensitive(False)
             def started(task):
+                self.follow_chat = True
+                self.tasks = [task] + [t for t in self.tasks if t['id'] != task['id']]
                 self.selected = task["id"]
                 self.conversation = task['conversation']
                 self.conversation_project = task['project']
@@ -476,6 +602,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.save_draft()
                 self.output_details.set_expanded(False)
                 self.show_task(task)
+                self.message_signature = None
+                self.render_messages({'id': self.conversation, 'goal': task['prompt'], 'turns': [],
+                                      'total_turns': len(self.message_archive)})
+                self.prompt.grab_focus()
                 self.refresh()
             self.background(lambda: api("tasks", data), started)
 
@@ -486,7 +616,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.background(lambda: api("stop", {"id": identifier}), self.show_task)
 
         def unload(self, *_):
-            self.background(lambda: api("unload", {}), lambda _: self.refresh())
+            self.background(lambda: api("unload", {"model": getattr(self, "loaded_model", hub.LOCAL_AGENT_MODEL)}), lambda _: self.refresh())
 
         def select_history(self, task):
             def loaded(detail):
@@ -579,6 +709,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.hardware.set_text('NVIDIA driver active · Live hardware status' if gpu else 'CPU inference · Live hardware status')
             self.render_history()
             self.render_models(status)
+            self.render_accounts(status)
             self.connection.set_text('●  Connected locally')
             self.run_button.set_sensitive(not any(t["status"] in dashboard.ACTIVE for t in self.tasks))
             if detail:
@@ -634,6 +765,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
 
         def open_chat(self, project, identifier, task=None):
             def opened(data):
+                self.follow_chat = True
                 self.conversation = identifier
                 self.conversation_project = project
                 self.selected = task['id'] if task else None
@@ -665,12 +797,15 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             signature = json.dumps(all_turns) + str(active.get('id') if active else '')
             if signature == self.message_signature:
                 return
+            previous_scroll = self.chat_scroll.get_vadjustment().get_value()
+            previous_height = self.chat_scroll.get_vadjustment().get_upper()
+            earlier = bool(all_turns and data['turns'] and data['turns'][-1]['rowid'] < all_turns[-1]['rowid'])
             self.message_signature = signature
             self.chat_title.set_text(data['goal'].split('\n')[0].split('. ')[0][:80])
             self.sync_chat_layout()
             self.chat_scroll.set_visible(True)
             self.clear_box(self.chat_messages)
-            def add(role, text, status=''):
+            def add(role, text, status='', turn=None):
                 user = role == 'You'
                 row = self.row(0)
                 row.add_css_class('message-row')
@@ -680,10 +815,29 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 speaker = self.label(role, 'chat-title')
                 speaker.set_xalign(1 if user else 0)
                 card.append(speaker)
-                content = self.label(text)
-                content.set_selectable(True)
-                content.set_max_width_chars(56 if user else 72)
-                card.append(content)
+                for kind, value in ([('paragraph', text)] if user else blocks(text)):
+                    content = self.label(value)
+                    content.set_selectable(True)
+                    content.set_max_width_chars(56 if user else 72)
+                    if not user and kind != 'code':
+                        content.set_markup(inline_markup(value))
+                    if kind == 'heading':
+                        content.add_css_class('reply-heading')
+                    if kind == 'code':
+                        content.add_css_class('reply-code')
+                        content.set_wrap(False)
+                        code_scroll = Gtk.ScrolledWindow(max_content_height=220, propagate_natural_height=True)
+                        code_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+                        code_scroll.set_child(content)
+                        card.append(code_scroll)
+                    else:
+                        card.append(content)
+                if not user and turn:
+                    actions = self.row(12)
+                    actions.append(self.button('Copy reply', lambda *_: Gdk.Display.get_default().get_clipboard().set(text)))
+                    if turn.get('has_review'):
+                        actions.append(self.button('View changes', lambda *_, task=turn['task']: self.open_changes(task)))
+                    card.append(actions)
                 if status and status != 'completed':
                     card.append(self.label(status.replace('_', ' ').capitalize(), 'footnote'))
                 gutter = Gtk.Box(hexpand=True, width_request=65)
@@ -699,10 +853,71 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.chat_messages.append(self.button('Load earlier messages', lambda *_: self.background(lambda: api(endpoint), self.render_messages)))
             for turn in all_turns:
                 add('You', turn['request'])
-                add('Coding Hub', turn['result'] or 'No final response was saved.', turn['status'])
+                add('Coding Hub', turn['result'] or 'No final response was saved.', turn['status'], turn)
             if active:
                 add('You', active['prompt'])
-                add('Coding Hub', 'Working on your message. See live task output for progress.')
+                add('Coding Hub', 'Working on your request…')
+            if self.follow_chat and not earlier:
+                self.queue_chat_scroll()
+            else:
+                self.scroll_pending = True
+                def preserve_position():
+                    adjustment = self.chat_scroll.get_vadjustment()
+                    adjustment.set_value(previous_scroll + (max(0, adjustment.get_upper() - previous_height) if earlier else 0))
+                    self.scroll_pending = False
+                    self.chat_scrolled(adjustment)
+                    return False
+                GLib.idle_add(preserve_position, priority=GLib.PRIORITY_LOW)
+
+        def open_changes(self, task):
+            project = self.conversation_project
+            def loaded(review):
+                window = Gtk.Window(title='Task changes', transient_for=self.window, modal=True, default_width=1040, default_height=720)
+                window.add_css_class('coding-hub')
+                if self.theme_switch.get_active(): window.add_css_class('dark')
+                self.review_window = window
+                body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                body.set_margin_top(20); body.set_margin_bottom(20); body.set_margin_start(20); body.set_margin_end(20)
+                heading = self.row(12)
+                title = self.label('Task changes', 'page-title'); title.set_hexpand(True)
+                heading.append(title); heading.append(self.button('Close', lambda *_: window.close())); body.append(heading)
+                files = review['files']
+                body.append(self.label(str(len(files)) + ' files · +' + str(sum(f['added'] for f in files)) + ' −' + str(sum(f['removed'] for f in files)) + (' · Partial review' if review.get('limited') else ''), 'muted'))
+                body.append(self.label(review['note'] + (' Some files or diffs exceeded the review limits.' if review.get('limited') else ''), 'footnote'))
+                split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
+                listing = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                left = Gtk.ScrolledWindow(); left.set_size_request(200, -1); left.set_child(listing)
+                split.set_start_child(left); split.set_position(230)
+                right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+                file_title = self.label('', 'section-title'); right.append(file_title)
+                diff = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.NONE)
+                diff.add_css_class('review-code')
+                buffer = diff.get_buffer()
+                dark = self.theme_switch.get_active()
+                for name, color, bg in [('added', '#afdcb2' if dark else '#205a2c', '#203e2a' if dark else '#dff1e1'), ('removed', '#f1b9b3' if dark else '#843330', '#482a2a' if dark else '#f9e3e2'), ('hunk', '#a9cbe3' if dark else '#38668f', '#20323f' if dark else '#e9f0f6')]:
+                    buffer.create_tag(name, foreground=color, paragraph_background=bg)
+                scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True); scroll.set_child(diff); right.append(scroll)
+                right.append(self.button('Copy diff', lambda *_: Gdk.Display.get_default().get_clipboard().set(buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True))))
+                split.set_end_child(right); body.append(split)
+                buttons = []
+                def select(file, index):
+                    file_title.set_text(file['path']); buffer.set_text('')
+                    for i, button in enumerate(buttons):
+                        button.add_css_class('selected') if i == index else button.remove_css_class('selected')
+                    for line in file['diff'].splitlines(keepends=True):
+                        tag = 'hunk' if line.startswith('@@') else 'added' if line.startswith('+') and not line.startswith('+++') else 'removed' if line.startswith('-') and not line.startswith('---') else None
+                        if tag: buffer.insert_with_tags_by_name(buffer.get_end_iter(), line, tag)
+                        else: buffer.insert(buffer.get_end_iter(), line)
+                for index, file in enumerate(files):
+                    b = self.button('', lambda *_, f=file, i=index: select(f, i))
+                    item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                    name = self.label(file['path']); name.set_max_width_chars(26); item.append(name)
+                    item.append(self.label(file['status'] + ' · +' + str(file['added']) + ' −' + str(file['removed']), 'footnote'))
+                    b.set_child(item); buttons.append(b); listing.append(b)
+                if files: select(files[0], 0)
+                else: buffer.set_text('No captured source changes.')
+                window.set_child(body); window.present()
+            self.background(lambda: api('changes?project=' + quote(project) + '&task=' + quote(task)), loaded)
 
         def page_box(self, title, name, subtitle=''):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
@@ -724,10 +939,15 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.page_headings[name] = label
             self.page_subtitles[name] = sublabel
             self.page_header_rows[name] = title_row
-            scroll = Gtk.ScrolledWindow()
-            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scroll.set_child(box)
-            self.stack.add_titled(scroll, name, title)
+            if name == 'workspace':
+                # One scrollable transcript with a stationary composer.
+                box.set_vexpand(True)
+                self.stack.add_titled(box, name, title)
+            else:
+                scroll = Gtk.ScrolledWindow()
+                scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+                scroll.set_child(box)
+                self.stack.add_titled(scroll, name, title)
             return box
 
         def build_models_page(self):
@@ -748,7 +968,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.hardware = self.label('Checking agents and hardware…', 'muted')
             hardware.append(self.hardware)
             self.hardware_values = {}
-            for key, title in (('gpu', 'Graphics'), ('vram', 'GPU memory'), ('ram', 'Available system memory'), ('placement', 'Model placement')):
+            self.hardware_bars = {}
+            for key, title in (('gpu', 'Graphics'), ('gpu_load', 'GPU activity'), ('cpu', 'CPU activity'), ('vram', 'GPU memory'), ('ram', 'System memory'), ('placement', 'Local model placement')):
                 row = self.row()
                 left = self.label(title, 'muted')
                 left.set_hexpand(True)
@@ -757,6 +978,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 row.append(value)
                 self.hardware_values[key] = value
                 hardware.append(row)
+                if key in ('gpu_load', 'cpu', 'vram', 'ram'):
+                    bar = Gtk.ProgressBar()
+                    hardware.append(bar)
+                    self.hardware_bars[key] = bar
+            self.hardware_age = self.label('Waiting for a live sample', 'footnote')
+            hardware.append(self.hardware_age)
             box.append(hardware)
             box.append(self.section_heading('Provider access', self.button('View usage & limits →', lambda *_: self.stack.set_visible_child_name('usage'))))
             box.append(self.label('Cloud routes use provider limits. Local Qwen has no provider quota; speed depends on your hardware. Releasing the local model frees memory and it loads again when needed.', 'muted'))
@@ -770,13 +997,160 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             gpu, ram = status.get('gpu'), status.get('ram')
             self.hardware_values['gpu'].set_text(gpu['name'].replace('NVIDIA GeForce ', '') if gpu else 'CPU inference')
             self.hardware_values['vram'].set_text(f"{gpu['used_mb'] / 1024:.1f} / {gpu['total_mb'] / 1024:.0f} GB" if gpu else 'Not available')
-            self.hardware_values['ram'].set_text(f"{ram['available_gb']} / {ram['total_gb']} GB" if ram else 'Not available')
-            loaded = next((m for m in status.get('loaded', []) if m.get('name') == status.get('local_model') or m.get('model') == status.get('local_model')), None)
+            self.hardware_values['ram'].set_text(f"{ram['total_gb']-ram['available_gb']:.1f} / {ram['total_gb']} GB used" if ram else 'Not available')
+            gpu_load, cpu = (gpu or {}).get('utilization'), status.get('cpu')
+            self.hardware_values['gpu_load'].set_text(f'{gpu_load}% active' if gpu_load is not None else 'Not available')
+            self.hardware_values['cpu'].set_text(f'{cpu:.0f}% active' if cpu is not None else 'Waiting for sample')
+            for key, value in {'gpu_load': (gpu_load or 0)/100, 'cpu': (cpu or 0)/100,
+                               'vram': gpu['used_mb']/max(gpu['total_mb'],1) if gpu else 0,
+                               'ram': 1-ram['available_gb']/max(ram['total_gb'],1) if ram else 0}.items():
+                self.hardware_bars[key].set_fraction(max(0, min(1, value)))
+            stamp = status.get('sampled_at')
+            self.hardware_age.set_text('Live · sampled ' + datetime.fromtimestamp(stamp).strftime('%H:%M:%S') + ' · refreshes about every 3–6 seconds' if stamp else 'Waiting for live metrics')
+            loaded = next((m for m in status.get('loaded', []) if m.get('name') == status.get('local_model') or m.get('model') == status.get('local_model')), next(iter(status.get('loaded', [])), None))
+            self.loaded_model = (loaded or {}).get('name') or (loaded or {}).get('model') or hub.LOCAL_AGENT_MODEL
             placement = 'Sleeping · loads when needed'
             if loaded:
-                placement = f"{round(loaded.get('size_vram', 0) / max(loaded.get('size', 1), 1) * 100)}% GPU · remainder on CPU" if loaded.get('size_vram') else 'CPU only'
+                placement = self.loaded_model + ' · ' + (f"{round(loaded.get('size_vram', 0) / max(loaded.get('size', 1), 1) * 100)}% GPU · remainder on CPU" if loaded.get('size_vram') else 'CPU only')
             self.hardware_values['placement'].set_text(placement)
+            self.hardware.set_text(('GPU acceleration in use' if loaded and loaded.get('size_vram') else 'Local model running on CPU') if loaded else ('GPU available · local model is sleeping' if gpu else 'Local inference uses CPU'))
             self.release_button.set_sensitive(bool(loaded) and not any(t['status'] in dashboard.ACTIVE for t in self.tasks))
+
+        def build_accounts_page(self):
+            box = self.page_box('Accounts', 'accounts', 'Connect once. Continue your work here.')
+            self.account_rows = {}
+            for key, title, note in (
+                ('antigravity', 'Antigravity · Google', 'Includes the Gemini, Claude and GPT models your Antigravity plan provides. Choose Google OAuth for a personal account.'),
+                ('claude', 'Claude subscription', 'Optional separate Claude account. Uses the official Claude CLI and your existing subscription.'),
+                ('openai', 'ChatGPT subscription', 'Optional separate ChatGPT account through OpenCode. Choose ChatGPT sign-in; API-key billing is not enabled here.')):
+                card = self.card(8)
+                button = self.button('Sign in', lambda _, provider=key: self.start_signin(provider), 'primary')
+                card.append(self.section_heading(title, button))
+                card.append(self.label(note, 'muted'))
+                state = self.label('Checking installed CLI…', 'footnote')
+                card.append(state)
+                if key == 'antigravity':
+                    reconnect = self.button('Reconnect Google account', lambda *_: self.start_signin('antigravity', True))
+                    reconnect.set_tooltip_text('Signs out of the saved Antigravity session and opens Google sign-in again')
+                    reconnect.set_halign(Gtk.Align.START)
+                    card.append(reconnect)
+                    card.append(self.label('Reconnect signs out of the saved Antigravity session first. Use it when authentication has expired.', 'footnote'))
+                self.account_rows[key] = (state, button)
+                box.append(card)
+            self.signin_panel = self.card(10)
+            self.signin_panel.set_visible(False)
+            self.signin_title = self.label('Account sign-in', 'section-title')
+            self.signin_panel.append(self.section_heading('Sign-in', self.button('Done / close', self.close_signin)))
+            self.signin_panel.append(self.signin_title)
+            self.signin_panel.append(self.label('Follow the provider prompts below. Complete Google, Claude or ChatGPT authentication in your browser, then return here. This panel is temporary and is not saved to chat history.', 'muted'))
+            self.signin_screen = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.NONE)
+            self.signin_screen.add_css_class('signin-screen')
+            scroll = Gtk.ScrolledWindow(min_content_height=280)
+            scroll.set_child(self.signin_screen)
+            self.signin_panel.append(scroll)
+            controls = self.row(8)
+            for key, label in (('up', '↑'), ('down', '↓'), ('enter', 'Enter'), ('tab', 'Tab'), ('escape', 'Esc')):
+                button = self.button(label, lambda _, k=key: self.signin_send({'key': k}))
+                button.set_tooltip_text('Send ' + key + ' to the sign-in prompt')
+                controls.append(button)
+            self.signin_panel.append(controls)
+            self.signin_links = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.signin_panel.append(self.signin_links)
+            row = self.row(8)
+            self.signin_input = Gtk.PasswordEntry(hexpand=True, show_peek_icon=True)
+            self.signin_input.set_property('placeholder-text', 'Code or response requested by the provider')
+            self.signin_input.connect('activate', self.signin_text)
+            row.append(self.signin_input)
+            row.append(self.button('Send response', self.signin_text))
+            self.signin_panel.append(row)
+            box.append(self.signin_panel)
+            box.append(self.label('Account limits belong to each provider. Separate account routes are never selected by Automatic or Smart. Credentials stay in the provider’s own storage.', 'footnote'))
+
+        def render_accounts(self, status):
+            installed = {item['id']: item['installed'] for item in status.get('accounts', [])}
+            states = status.get('account_status', {})
+            for key, (label, button) in self.account_rows.items():
+                ready = installed.get(key, False)
+                state = states.get(key)
+                if key == 'antigravity':
+                    quota = status.get('quota', {})
+                    state = 'connected' if quota.get('available') and not quota.get('error') and not quota.get('stale') else 'unknown'
+                text = {'connected': 'Connected', 'saved': 'Sign-in saved · provider confirms access when used',
+                        'sign_in': 'Sign in to connect', 'unknown': 'Installed · sign in or check access'}.get(state, 'Installed · checking access')
+                label.set_text(text if ready else 'CLI not installed on this computer')
+                button.set_sensitive(ready and not self.signin_id)
+                button.set_label('Manage sign-in' if state in ('connected', 'saved') else 'Sign in')
+            self.model_choices = dict(status.get('provider_models', {}), free=[{'id': mid, 'name': mid} for mid in status.get('free_models', [])], local=[{'id': mid, 'name': mid} for mid in status.get('models', [])])
+            self.render_model_picker()
+
+        def start_signin(self, provider, reconnect=False):
+            self.error.set_visible(False)
+            def started(data):
+                self.signin_id = data['id']
+                self.signin_panel.set_visible(True)
+                self.signin_title.set_text({'antigravity': 'Antigravity · Google OAuth', 'claude': 'Claude subscription', 'openai': 'ChatGPT subscription'}[provider])
+                self.signin_link_signature = None
+                self.show_signin(data)
+                # Scroll the accounts page to its active sign-in panel.
+                self.signin_input.grab_focus()
+            self.background(lambda: api('accounts/start', {'provider': provider, 'reconnect': reconnect}), started)
+
+        def show_signin(self, data):
+            if data['id'] != self.signin_id:
+                return
+            self.signin_screen.get_buffer().set_text(data.get('screen') or 'Opening the provider’s sign-in flow…')
+            links = data.get('links', [])
+            if links != getattr(self, 'signin_link_signature', None):
+                self.signin_link_signature = links
+                self.clear_box(self.signin_links)
+                for link in links:
+                    button = Gtk.LinkButton.new_with_label(link, 'Open provider sign-in in browser ↗')
+                    button.set_halign(Gtk.Align.START)
+                    self.signin_links.append(button)
+            if not data.get('running'):
+                self.signin_title.set_text('Sign-in command finished · choose Done to refresh account status' if data.get('exit_code') == 0 else 'Sign-in ended · close and try again if access is not connected')
+
+        def poll_signin(self):
+            if self.closed_window:
+                return False
+            if not self.signin_id or self.signin_busy:
+                return True
+            self.signin_busy = True
+            identifier = self.signin_id
+            def fetch():
+                try:
+                    return api('accounts/session?id=' + identifier)
+                except Exception:
+                    return None
+            def result(data):
+                self.signin_busy = False
+                if data:
+                    self.show_signin(data)
+            self.background(fetch, result)
+            return True
+
+        def signin_send(self, data):
+            if self.signin_id:
+                self.background(lambda: api('accounts/input', dict(data, id=self.signin_id)), lambda _: None)
+
+        def signin_text(self, *_):
+            text = self.signin_input.get_text()
+            self.signin_input.set_text('')
+            if text:
+                self.signin_send({'text': text})
+
+        def close_signin(self, *_):
+            identifier = self.signin_id
+            if not identifier:
+                return
+            def closed(_):
+                self.signin_id = None
+                self.signin_panel.set_visible(False)
+                self.signin_screen.get_buffer().set_text('')
+                self.signin_input.set_text('')
+                self.clear_box(self.signin_links)
+                self.refresh()
+            self.background(lambda: api('accounts/close', {'id': identifier}), closed)
 
         def build_memory_page(self):
             box = self.page_box('Project memory', 'memory', 'Keep important requirements and project conventions across conversations.')
@@ -805,7 +1179,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
 
         def page_changed(self, *_):
             name = self.stack.get_visible_child_name()
-            titles = {'workspace': 'Chats', 'history': 'Task history', 'models': 'Models & hardware', 'usage': 'Usage & limits', 'memory': 'Project memory'}
+            titles = {'workspace': 'Chats', 'history': 'Task history', 'models': 'Models & hardware', 'usage': 'Usage & limits', 'memory': 'Project memory', 'accounts': 'Accounts'}
             self.page_title.set_text('Workspace / ' + titles.get(name, 'Chats'))
             for key, button in self.navigation.items():
                 if key == name:

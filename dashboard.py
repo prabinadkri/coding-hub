@@ -25,9 +25,10 @@ import webbrowser
 import hub
 import quota
 import free_quota
+import accounts
 from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -57,6 +58,8 @@ class TaskManager:
             args.append("--apply")
         if task.get("conversation"):
             args.extend(["--conversation", task["conversation"]])
+        if task.get('model'):
+            args.extend(['--model', task['model']])
         return args + ["--", task["prompt"]]
 
     def persist(self, task):
@@ -81,8 +84,9 @@ class TaskManager:
         if not project.is_dir():
             raise ValueError("The project folder does not exist.")
         backend, quality, mode = data.get("backend", "auto"), data.get("quality", "fast"), data.get("mode", "analysis")
-        if backend not in ("auto", "smart", "antigravity", "free", "local") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
+        if backend not in ("auto", "smart", "antigravity", "free", "local", "claude", "openai") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
             raise ValueError("Choose a valid route, quality and task mode.")
+        model = hub.validate_model(backend, data.get('model'))
         if backend == "smart" and len(prompt.encode()) > 6000:
             raise ValueError("Smart requests are limited to 6,000 UTF-8 bytes. Split the task or choose a direct route.")
         with self.lock:
@@ -93,6 +97,7 @@ class TaskManager:
             task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project),
                     "conversation": conversation,
                     "backend": backend, "quality": quality, "mode": mode, "created_at": time.time(),
+                    "model": model,
                     "started_at": None, "ended_at": None, "status": "queued", "exit_code": None}
             self.tasks[task["id"]] = task
             self.persist(task)
@@ -171,14 +176,45 @@ class TaskManager:
                 self.stop(item["id"])
 
 
+class PricingCache:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.updating = False
+        self.updated = 0
+        self.value = {'free_models': [], 'pricing_checked_at': None, 'pricing_error': False}
+
+    def get(self):
+        with self.lock:
+            if not self.updating and time.monotonic() - self.updated > 300:
+                self.updating = True
+                threading.Thread(target=self.refresh, daemon=True).start()
+            return dict(self.value)
+
+    def refresh(self):
+        try:
+            models = hub.refresh_free_models()
+            with self.lock:
+                self.value = {'free_models': models, 'pricing_checked_at': time.time(), 'pricing_error': False}
+        except Exception:
+            with self.lock:
+                self.value['pricing_error'] = True
+        finally:
+            with self.lock:
+                self.updated, self.updating = time.monotonic(), False
+
+
 class StatusCache:
     def __init__(self):
         self.lock = threading.Lock()
         self.updating = False
         self.updated = 0
+        self.cpu_sample = None
+        self.access = accounts.AccessCache()
+        self.prices = PricingCache()
         self.value = {"checking": True, "home": str(Path.home()), "default_project": str(Path.home() / "Documents"),
                       "version": VERSION, "programs": {}, "models": [], "loaded": [], "gpu": None,
-                      "free_models": [], "pricing_checked_at": None, "ram": None}
+                      "free_models": [], "pricing_checked_at": None, "ram": None, "cpu": None,
+                      "sampled_at": None, "accounts": [], "account_status": {}}
 
     @staticmethod
     def gpu():
@@ -203,9 +239,20 @@ class StatusCache:
         except (OSError, ValueError, KeyError):
             return None
 
+    def cpu(self):
+        try:
+            values = [int(n) for n in Path('/proc/stat').read_text().splitlines()[0].split()[1:9]]
+            sample = sum(values), values[3] + values[4]
+            previous, self.cpu_sample = self.cpu_sample, sample
+            if previous and sample[0] > previous[0]:
+                return round(100 * (1 - (sample[1] - previous[1]) / (sample[0] - previous[0])), 1)
+        except (OSError, ValueError, IndexError):
+            pass
+        return None
+
     def get(self, force=False):
         with self.lock:
-            if not self.updating and (force or time.monotonic() - self.updated > 20):
+            if not self.updating and (force or time.monotonic() - self.updated > 3):
                 self.updating = True
                 threading.Thread(target=self.refresh, daemon=True).start()
             return dict(self.value, refreshing=self.updating)
@@ -223,15 +270,12 @@ class StatusCache:
                 tags = pool.submit(safe, hub.local_models, [])
                 loaded = pool.submit(safe, lambda: hub.get_json("http://127.0.0.1:11434/api/ps", 3).get("models", []), [])
                 gpu = pool.submit(self.gpu)
-                value.update(models=tags.result(), loaded=loaded.result(), gpu=gpu.result(), ram=self.ram())
-            # Dashboard prices may be cached; executing a free route always verifies afresh.
-            if not value.get("pricing_checked_at") or not 0 <= time.time() - value["pricing_checked_at"] <= 300:
-                try:
-                    value["free_models"] = hub.refresh_free_models()
-                    value["pricing_checked_at"] = time.time()
-                    value["pricing_error"] = False
-                except Exception:
-                    value["pricing_error"] = True
+                value.update(models=tags.result(), loaded=loaded.result(), gpu=gpu.result(), ram=self.ram(),
+                             cpu=self.cpu(), sampled_at=time.time(), accounts=accounts.available())
+            value.update(self.access.get())
+            # Cloud catalog calls never hold up live local hardware sampling.
+            # Executing a selected free model still verifies its price afresh.
+            value.update(self.prices.get())
             value.update(checking=False, local_ready=hub.LOCAL_AGENT_MODEL in value["models"], local_model=hub.LOCAL_AGENT_MODEL)
             with self.lock:
                 self.value, self.updated = value, time.monotonic()
@@ -255,6 +299,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.status = status or StatusCache()
         self.quota = quota.QuotaCache()
         self.free_quota = free_quota.FreeQuotaCache()
+        self.accounts = accounts.AccountManager()
         self.token = token or secrets.token_urlsafe(32)
         super().__init__(address, Handler)
 
@@ -305,6 +350,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {"app": "coding-hub", "version": VERSION})
             if parsed.path == "/api/status":
                 return self.reply(200, dict(self.server.status.get(), quota=self.server.quota.get(), free_quota=self.server.free_quota.get()))
+            if parsed.path == '/api/accounts/session':
+                identifier = parse_qs(parsed.query).get('id', [''])[0]
+                return self.reply(200, self.server.accounts.get(identifier).snapshot())
             if parsed.path == "/api/project":
                 project = parse_qs(parsed.query).get("path", [""])[0]
                 if not project:
@@ -314,6 +362,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {"tasks": self.server.manager.list()})
             if parsed.path == "/api/projects":
                 return self.reply(200, {"projects": project_tree()})
+            if parsed.path == '/api/changes':
+                from change_review import load
+                query = parse_qs(parsed.query)
+                project, task = query.get('project', [''])[0], query.get('task', [''])[0]
+                if not project or not task:
+                    raise ValueError('Choose a project and saved task.')
+                return self.reply(200, load(project, task))
             if parsed.path == "/api/conversation":
                 query = parse_qs(parsed.query)
                 project, identifier = query.get("project", [""])[0], query.get("id", [""])[0]
@@ -353,7 +408,22 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
             if self.path == "/api/tasks":
+                if self.server.accounts.session and self.server.accounts.session.snapshot()['running']:
+                    raise RuntimeError('Finish or close account sign-in before sending a task.')
                 return self.reply(201, self.server.manager.start(data))
+            if self.path == '/api/accounts/start':
+                if self.server.manager.active():
+                    raise RuntimeError('Wait for the running task before changing account access.')
+                return self.reply(201, self.server.accounts.start(data.get('provider'), data.get('reconnect') is True))
+            if self.path == '/api/accounts/input':
+                return self.reply(200, self.server.accounts.get(data.get('id')).send(data))
+            if self.path == '/api/accounts/close':
+                self.server.accounts.get(data.get('id')).close()
+                self.server.quota.get(True)
+                self.server.status.updated = 0
+                self.server.status.access.get(True)
+                self.server.status.get(True)
+                return self.reply(200, {'ok': True})
             if self.path == "/api/stop":
                 return self.reply(200, self.server.manager.stop(data.get("id", "")))
             if self.path == "/api/refresh":
@@ -381,8 +451,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/unload":
                 if self.server.manager.active():
                     raise RuntimeError("Wait for the active task to finish before releasing memory.")
+                model = data.get('model') or hub.LOCAL_AGENT_MODEL
+                if not isinstance(model, str) or model not in hub.local_models():
+                    raise ValueError('Choose an installed local model to release.')
                 request = urllib.request.Request("http://127.0.0.1:11434/api/generate",
-                    data=json.dumps({"model": hub.LOCAL_AGENT_MODEL, "keep_alive": 0}).encode(), headers={"Content-Type": "application/json"})
+                    data=json.dumps({"model": model, "keep_alive": 0}).encode(), headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(request, timeout=15) as response:
                     response.read()
                 self.server.status.get(True)
@@ -441,6 +514,7 @@ def serve(port=8765, open_browser=True):
         pass
     finally:
         server.manager.close()
+        server.accounts.close()
         server.server_close()
         try:
             if json.loads(descriptor.read_text()).get("pid") == os.getpid():

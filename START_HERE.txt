@@ -57,3 +57,13 @@ Choose a project only for a new chat. Existing chats keep their project and
 open directly to messages: yours on the right, the assistant on the left.
 Expand Chat settings to change the route. Project memory in the header
 opens instructions shared by every chat in that project.
+
+NEW IN 2.5
+- Accounts page: Google / Antigravity, optional Claude and ChatGPT subscriptions.
+- Choose a model in Chat settings for Antigravity, Free cloud, or Local.
+- Ctrl+Enter sends from the message box; Enter adds a line.
+- Chats follow new messages and pause when you scroll up.
+- Dark switch in the app; Dark mode in the browser.
+- Live CPU/GPU and memory readings in Models & hardware.
+- CLI: :models, :model MODEL_ID, and :route NAME inside codehub chat.
+- README.md contains complete app, browser, and CLI guides.

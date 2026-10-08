@@ -8,6 +8,9 @@
 - `smart_route.py`: bounded manager/worker orchestration and provider-reported token metrics.
 - `free_quota.py`: read-only OpenCode usage metadata, rate-limit observations, and expected UTC reset timing.
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
+- `accounts.py`: bounded native sign-in sessions, account metadata, and model catalogs.
+- `change_review.py`: bounded before/after source diffs and read-only task review.
+- `message_format.py`: safe Markdown presentation for native and terminal replies.
 - `desktop.py`: native GTK 4 application and project/chat navigation.
 - `assets/desktop.css`: native GTK theme.
 - `tools/check_desktop_ui.py`: isolated native layout and interaction validation.
@@ -22,7 +25,7 @@ Start the native Linux interface with `python3 hub.py app`.
 
 ## Constraints
 
-- Keep the CLI and browser backend compatible with Python 3.10+ and the standard library.
+- Keep the CLI and browser backend compatible with Python 3.10+. Core routing uses the standard library; sign-in terminal rendering uses bundled, unmodified libraries in `vendor/`.
 - Preserve existing files, unrelated work, model installations, and user agent settings.
 - Keep HTTP bound to loopback and require authentication for every API endpoint.
 - Never publish credentials, account details, task logs, source indexes, or session tokens.

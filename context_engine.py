@@ -303,7 +303,14 @@ class ProjectMemory:
             total = db.execute('SELECT count(*) FROM turns WHERE conversation=?', (identifier,)).fetchone()[0]
             oldest = rows[-1]['rowid'] if rows else None
             has_older = bool(oldest and db.execute('SELECT 1 FROM turns WHERE conversation=? AND rowid<? LIMIT 1', (identifier, oldest)).fetchone())
-        return dict(conversation, project=str(self.project), turns=[dict(r) for r in reversed(rows)], total_turns=total,
+        turns = []
+        for row in reversed(rows):
+            turn = dict(row)
+            task = turn['task']
+            turn['has_review'] = bool(re.fullmatch(r'[A-Za-z0-9_-]{1,100}', task) and
+                                      (hub.STATE / 'tasks' / task / 'changes.json').is_file())
+            turns.append(turn)
+        return dict(conversation, project=str(self.project), turns=turns, total_turns=total,
                     oldest_cursor=oldest, has_older=has_older)
 
 

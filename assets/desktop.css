@@ -54,3 +54,46 @@ separator { background: #e4eadf; min-height: 1px; }
 .user-message { background: #e1edda; border-radius: 16px 16px 4px 16px; }
 .assistant-message { border-radius: 16px 16px 16px 4px; }
 .conversation-page .input-frame { border-color: #d7e2ce; }
+
+/* Compact chat, anchored composer, and an explicit native dark appearance. */
+.conversation-page { padding: 16px 24px 12px; }
+.conversation-page .heading { font-size: 20px; }
+.composer { padding: 12px 16px; border-radius: 14px; }
+.composer .section-title { font-size: 12px; }
+.composer textview { padding: 8px 10px; }
+.composer expander title { padding: 3px 0; font-size: 11px; }
+.composer button { padding: 7px 12px; }
+.signin-screen, .signin-screen text { background: #12251f; color: #e2eee7; font-size: 11px; }
+window.dark { background: #151d1a; color: #e1e9e3; }
+.dark headerbar { background: #18221d; border-color: #2d3b32; color: #e1e9e3; }
+.dark .sidebar { background: #101a15; }
+.dark .header-title, .dark .muted { color: #a5b6aa; }
+.dark .section, .dark .footnote { color: #93a69a; }
+.dark .card, .dark .assistant-message, .dark .history-item { background: #1e2a23; border-color: #35453a; color: #e1e9e3; }
+.dark .user-message { background: #304735; color: #edf5e9; }
+.dark button { background: #243329; color: #d9e7db; border-color: #3c5041; }
+.dark button:hover { background: #314638; border-color: #78966d; }
+.dark button.primary { background: #b6d3a1; color: #172516; border-color: #b6d3a1; }
+.dark button.primary:hover { background: #c7dfb5; }
+.dark button.danger { color: #eca99c; }
+.dark .sidebar button { background: transparent; border: 0; color: #b3c5b8; }
+.dark .sidebar button.selected, .dark .sidebar button.active-chat { background: #2b4031; color: #e6f1df; }
+.dark .sidebar button.new-chat { background: #b6d3a1; color: #172516; }
+.dark .sidebar button:hover { background: #344c3b; color: #edf5e9; }
+.dark entry, .dark .input-frame, .dark textview, .dark textview text { background: #17231c; color: #e4ece5; border-color: #3a4f3e; }
+.dark .output, .dark .output text, .dark .signin-screen, .dark .signin-screen text { background: #101813; color: #d7e9db; }
+.dark .pill, .dark .notice { background: #2b3e2e; color: #d0dfbc; border-color: #415639; }
+.dark expander title { color: #b0c2a3; }
+.dark progressbar trough { background: #354238; }
+.dark progressbar progress { background: #a3c78b; }
+.dark separator { background: #344139; }
+.dark .error-banner { background: #472a23; color: #ffd0be; }
+.dark dropdown popover, .dark popover contents { background: #243329; color: #e4ece5; }
+.reply-heading { font-weight: 700; font-size: 15px; padding-top: 6px; }
+.reply-code { font-family: monospace; font-size: 12px; background: #edf3e8; padding: 14px; border-radius: 8px; }
+.dark .reply-code { background: #101b14; color: #d7e8d7; }
+.dark switch:checked { background: #789c65; }
+
+.assistant-message, .dark .assistant-message { background: transparent; border: none; padding: 14px 8px; }
+.review-code { font-size: 12px; padding: 12px; }
+.dark .review-code text { background: #131e17; color: #e1e9e3; }
