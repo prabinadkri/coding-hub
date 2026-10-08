@@ -51,3 +51,9 @@ Usage & limits: provider quotas, free-model observations, and reset times.
 Project memory: persistent instructions and pinned requirements.
 
 The desktop app and browser share projects and saved conversations.
+
+EXISTING CONVERSATIONS
+Choose a project only for a new chat. Existing chats keep their project and
+open directly to messages: yours on the right, the assistant on the left.
+Expand Chat settings to change the route. Project memory in the header
+opens instructions shared by every chat in that project.

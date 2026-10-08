@@ -6,11 +6,11 @@ Coding Hub brings Antigravity, verified free OpenCode models, and Ollama into on
 
 ![Coding Hub dashboard](docs/dashboard.jpg)
 
-The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar.
+The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar. Existing chats hide the project picker, align your messages to the right and assistant replies to the left, and keep route settings in a compact disclosure. New chats show project selection. The header’s Project memory button opens the shared instructions for the current project.
 
-![Native Linux usage page with sample data](docs/desktop-usage.png)
+![Native Linux conversation with sample data](docs/desktop-chat.png)
 
-*Native GTK layout preview with synthetic usage data. Actual values come from your providers and local history.*
+*Native GTK conversation preview with synthetic messages. Actual values come from your providers and local history.*
 
 ## What you get
 
@@ -197,7 +197,7 @@ python3 -m unittest discover -p 'test_*.py' -v
 python3 hub.py web
 ```
 
-The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all five pages at two window widths, and checks conversation navigation, task history, memory loading, and refresh behavior without sending model prompts.
+The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all five pages and an existing conversation at two window widths, and checks message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
 
 To run that Linux UI check (requires GTK 4, PyGObject, Xvfb, and a session bus):
 

@@ -27,7 +27,7 @@ import quota
 import free_quota
 from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 

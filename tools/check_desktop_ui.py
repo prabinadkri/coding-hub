@@ -53,6 +53,7 @@ def main():
         if path.startswith('tasks/'): return task
         if path == 'projects': return {'projects': [{'name': 'studio', 'project': project, 'conversations': [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
         if path.startswith('conversation?'): return conversation
+        if path == 'project/notes': return {'saved': True}
         if path.startswith('project?'): return {'requirements': 'Preserve public APIs. Run the relevant tests.', 'indexed_files': 428, 'eligible_files': 428, 'turns': 3, 'guidance_files': [{'name': 'CODING_HUB.md'}]}
         if path == 'quota/refresh': return status['quota']
         if path == 'free-quota/refresh': return status['free_quota']
@@ -95,9 +96,42 @@ def main():
             settle()
             assert app.conversation == 'preview-chat'
             assert not app.project.get_editable()
+            assert not app.project_card.get_visible()
+            assert app.chat_memory_button.get_visible()
+            assert not app.chat_settings.get_expanded()
             assert app.chat_scroll.get_visible()
+            for width in (1240, 980):
+                app.window.set_default_size(width, 840)
+                settle()
+                user_row = app.chat_messages.get_first_child()
+                assistant_row = user_row.get_next_sibling()
+                user_card = user_row.get_last_child()
+                assistant_card = assistant_row.get_first_child()
+                assert user_card.has_css_class('user-message')
+                assert assistant_card.has_css_class('assistant-message')
+                assert user_card.get_halign() == Gtk.Align.END
+                assert assistant_card.get_halign() == Gtk.Align.START
+                assert user_card.get_width() < app.chat_scroll.get_width() - 50
+                assert assistant_card.get_width() < app.chat_scroll.get_width() - 50
+                paintable = Gtk.WidgetPaintable.new(app.window)
+                snapshot = Gtk.Snapshot()
+                paintable.snapshot(snapshot, app.window.get_width(), app.window.get_height())
+                texture = app.window.get_renderer().render_texture(snapshot.to_node(), None)
+                texture.save_to_png(str(args.output / f'desktop-chat-{width}.png'))
+            app.project.set_text('/workspace/other-project')
+            assert app.form()['project'] == project, 'A follow-up must keep its conversation project'
+            app.stack.set_visible_child_name('memory')
+            settle()
+            assert app.memory_project == project
+            app.save_requirements()
+            settle()
+            saved = next(body for path, body in reversed(requests) if path == 'project/notes')
+            assert saved['project'] == project, 'Memory must save to the project shown in the editor'
             app.new_task()
             assert app.project.get_editable() and not app.conversation
+            assert app.project_card.get_visible()
+            assert app.chat_settings.get_expanded()
+            app.project.set_text(project)
             app.select_history(task)
             settle()
             assert app.output_details.get_expanded()
@@ -109,7 +143,7 @@ def main():
             assert detail.get_expanded(), 'Refresh collapsed the token breakdown'
             app.render_free_quota({'models': [], 'error': 'Usage unavailable', 'local': {}})
             assert 'unavailable' in app.free_quota_checked.get_text()
-            print(json.dumps({'rendered': 10, 'native_workflows': 'passed', 'provider_requests': 0}))
+            print(json.dumps({'rendered': 12, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

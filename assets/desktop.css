@@ -46,3 +46,11 @@ progressbar progress { min-width: 0; margin: 0; padding: 0; background: #94b17f;
 flowboxchild { padding: 0; outline: none; }
 expander title { padding: 8px 0; color: #687b60; }
 separator { background: #e4eadf; min-height: 1px; }
+
+/* Conversation bubbles retain a clear side even when text wraps. */
+.conversation-page { padding-top: 22px; }
+.conversation-page .heading { font-size: 22px; }
+.message-row { padding: 4px 0; }
+.user-message { background: #e1edda; border-radius: 16px 16px 4px 16px; }
+.assistant-message { border-radius: 16px 16px 16px 4px; }
+.conversation-page .input-frame { border-color: #d7e2ce; }

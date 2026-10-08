@@ -100,9 +100,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.archive_conversation = None
             self.tasks = []
             self.history_signature = None
-            self.history_updating = False
             self.refreshing = False
             self.connected = False
+            self.memory_project = None
+            self.chat_layout = None
             self.last_output = None
             self.quota_signature = None
             self.free_signature = None
@@ -239,27 +240,37 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.stack.connect('notify::visible-child-name', self.page_changed)
             body = self.page_box('New conversation', 'workspace', 'Choose a project and start a focused conversation.')
             self.chat_title = self.page_headings['workspace']
-            project_card = self.card()
-            project_card.append(self.section_heading('Project', self.button('Project memory', lambda *_: self.stack.set_visible_child_name('memory'))))
+            self.chat_subtitle = self.page_subtitles['workspace']
+            self.workspace_body = body
+            self.chat_memory_button = self.button('Project memory', lambda *_: self.stack.set_visible_child_name('memory'))
+            self.page_header_rows['workspace'].append(self.chat_memory_button)
+            self.project_card = self.card()
+            self.project_card.append(self.label('Project', 'section-title'))
             project_row = self.row()
             self.project = Gtk.Entry(hexpand=True, placeholder_text='Choose a project folder')
             self.project.set_tooltip_text('Project folder')
             project_row.append(self.project)
             self.browse_button = self.button('Browse…', self.browse)
             project_row.append(self.browse_button)
-            project_card.append(project_row)
-            body.append(project_card)
+            self.project_card.append(project_row)
+            body.append(self.project_card)
             self.chat_messages = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            self.chat_scroll = Gtk.ScrolledWindow(min_content_height=160, max_content_height=360, propagate_natural_height=True)
+            self.chat_scroll = Gtk.ScrolledWindow(min_content_height=160, max_content_height=460, propagate_natural_height=True)
             self.chat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             self.chat_scroll.set_child(self.chat_messages)
             self.chat_scroll.set_visible(False)
             body.append(self.chat_scroll)
             composer = self.card(14)
-            composer.append(self.section_heading('Your message', self.label('Ctrl+Enter to send', 'muted')))
+            self.composer_title = self.label('Your message', 'section-title')
+            composer_heading = self.row()
+            self.composer_title.set_hexpand(True)
+            composer_heading.append(self.composer_title)
+            composer_heading.append(self.label('Ctrl+Enter to send', 'muted'))
+            composer.append(composer_heading)
             self.prompt = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
             self.prompt.set_tooltip_text('Describe what you want to build, fix, or understand')
-            prompt_scroll = Gtk.ScrolledWindow(min_content_height=130)
+            self.prompt_scroll = Gtk.ScrolledWindow(min_content_height=130)
+            prompt_scroll = self.prompt_scroll
             prompt_scroll.add_css_class('input-frame')
             prompt_scroll.set_child(self.prompt)
             composer.append(prompt_scroll)
@@ -274,9 +285,13 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.quality.set_tooltip_text('Antigravity quality')
             options.append(self.route)
             options.append(self.quality)
-            composer.append(options)
+            settings_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            settings_body.append(options)
             self.hint = self.label('', 'muted')
-            composer.append(self.hint)
+            settings_body.append(self.hint)
+            self.chat_settings = Gtk.Expander(label='Chat settings', expanded=True)
+            self.chat_settings.set_child(settings_body)
+            composer.append(self.chat_settings)
             self.route_changed()
             footer = self.row()
             self.edits = Gtk.CheckButton(label='Allow edits & commands')
@@ -318,6 +333,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.edits.set_active(draft.get("mode") == "build")
             except (OSError, ValueError, TypeError):
                 self.project.set_text(str(Path.home() / "Documents"))
+            self.sync_chat_layout()
             self.window.present()
             hub.save_json(hub.STATE / "desktop" / "window.json", {"pid": os.getpid(), "status": "open", "opened_at": time.time()})
             print("Coding Hub native app window opened.", flush=True)
@@ -356,11 +372,34 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
 
         def form(self):
             buffer = self.prompt.get_buffer()
-            return {"project": self.project.get_text(),
+            return {"project": self.current_project(),
                     "prompt": buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True),
                     "backend": routes[self.route.get_selected()],
                     "quality": "deep" if self.quality.get_selected() == 1 else "fast",
                     "mode": "build" if self.edits.get_active() else "analysis", "conversation": self.conversation}
+
+        def current_project(self):
+            return self.conversation_project if self.conversation else self.project.get_text()
+
+        def sync_chat_layout(self):
+            existing = bool(self.conversation)
+            self.project_card.set_visible(not existing)
+            self.project.set_editable(not existing)
+            self.browse_button.set_sensitive(not existing)
+            self.composer_title.set_text('Reply' if existing else 'Your message')
+            self.prompt_scroll.set_min_content_height(85 if existing else 130)
+            if self.chat_layout != existing:
+                self.chat_settings.set_expanded(not existing)
+                self.output_details.set_expanded(False)
+                self.chat_layout = existing
+            if existing:
+                self.workspace_body.add_css_class('conversation-page')
+                self.chat_subtitle.set_text(Path(self.conversation_project).name + ' · Saved conversation')
+                self.chat_subtitle.set_tooltip_text(self.conversation_project)
+            else:
+                self.workspace_body.remove_css_class('conversation-page')
+                self.chat_subtitle.set_text('Choose a project and start a focused conversation.')
+                self.chat_subtitle.set_tooltip_text(None)
 
         def save_draft(self):
             if self.closed_window:
@@ -370,6 +409,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
 
         def route_changed(self, *_):
             selected = self.route.get_selected()
+            if hasattr(self, 'chat_settings'):
+                self.chat_settings.set_label('Chat settings · ' + ('Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart')[selected])
             if hasattr(self, "quality"):
                 self.quality.set_sensitive(routes[selected] in ("auto", "antigravity", "smart"))
             if hasattr(self, "hint"):
@@ -413,6 +454,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.last_output = None
             self.activity.set_text("Ready · Enter a task to begin.")
             self.error.set_visible(False)
+            self.sync_chat_layout()
+            self.output_details.set_expanded(False)
+            self.stop_button.set_sensitive(False)
+            self.save_draft()
             self.prompt.grab_focus()
 
         def run_task(self, *_):
@@ -424,11 +469,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.selected = task["id"]
                 self.conversation = task['conversation']
                 self.conversation_project = task['project']
+                self.sync_chat_layout()
                 self.project.set_editable(False)
                 self.browse_button.set_sensitive(False)
                 self.prompt.get_buffer().set_text('')
                 self.save_draft()
-                self.output_details.set_expanded(True)
+                self.output_details.set_expanded(False)
                 self.show_task(task)
                 self.refresh()
             self.background(lambda: api("tasks", data), started)
@@ -592,6 +638,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.conversation_project = project
                 self.selected = task['id'] if task else None
                 self.project.set_text(project)
+                self.sync_chat_layout()
                 self.project.set_editable(False)
                 self.browse_button.set_sensitive(False)
                 self.prompt.get_buffer().set_text('')
@@ -619,19 +666,33 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             if signature == self.message_signature:
                 return
             self.message_signature = signature
-            self.chat_title.set_text(data['goal'].split('.')[0].split('\n')[0][:70])
+            self.chat_title.set_text(data['goal'].split('\n')[0].split('. ')[0][:80])
+            self.sync_chat_layout()
             self.chat_scroll.set_visible(True)
             self.clear_box(self.chat_messages)
             def add(role, text, status=''):
+                user = role == 'You'
+                row = self.row(0)
+                row.add_css_class('message-row')
                 card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-                card.add_css_class('user-message' if role == 'You' else 'assistant-message')
-                card.append(self.label(role + (' · ' + status if status else ''), 'chat-title'))
+                card.set_halign(Gtk.Align.END if user else Gtk.Align.START)
+                card.add_css_class('user-message' if user else 'assistant-message')
+                speaker = self.label(role, 'chat-title')
+                speaker.set_xalign(1 if user else 0)
+                card.append(speaker)
                 content = self.label(text)
-                content.set_wrap(True)
                 content.set_selectable(True)
-                content.set_max_width_chars(75)
+                content.set_max_width_chars(56 if user else 72)
                 card.append(content)
-                self.chat_messages.append(card)
+                if status and status != 'completed':
+                    card.append(self.label(status.replace('_', ' ').capitalize(), 'footnote'))
+                gutter = Gtk.Box(hexpand=True, width_request=65)
+                if user:
+                    row.append(gutter)
+                row.append(card)
+                if not user:
+                    row.append(gutter)
+                self.chat_messages.append(row)
             if data['total_turns'] > len(all_turns):
                 before = all_turns[0]['rowid']
                 endpoint = 'conversation?project=' + quote(self.conversation_project) + '&id=' + self.conversation + '&before=' + str(before)
@@ -647,14 +708,22 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
             box.add_css_class('page')
             heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            title_row = self.row()
             label = self.label(title, 'heading')
-            heading.append(label)
+            label.set_hexpand(True)
+            title_row.append(label)
+            heading.append(title_row)
+            sublabel = self.label(subtitle, 'muted')
             if subtitle:
-                heading.append(self.label(subtitle, 'muted'))
+                heading.append(sublabel)
             box.append(heading)
             if not hasattr(self, 'page_headings'):
                 self.page_headings = {}
+                self.page_subtitles = {}
+                self.page_header_rows = {}
             self.page_headings[name] = label
+            self.page_subtitles[name] = sublabel
+            self.page_header_rows[name] = title_row
             scroll = Gtk.ScrolledWindow()
             scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             scroll.set_child(box)
@@ -715,7 +784,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.memory_stats.set_wrap(True)
             box.append(self.memory_stats)
             box.append(self.label('PINNED REQUIREMENTS', 'section'))
-            note = self.label('These requirements are kept verbatim in every task for this project. Maximum 4,000 UTF-8 bytes.', 'muted')
+            note = self.label('Shared by every chat in this project. These requirements are kept verbatim in each task. Maximum 4,000 UTF-8 bytes.', 'muted')
             note.set_wrap(True)
             box.append(note)
             self.requirements = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
@@ -723,9 +792,11 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             scroll.set_child(self.requirements)
             box.append(scroll)
             actions = self.row()
-            actions.append(self.button('Save requirements', self.save_requirements, 'primary'))
+            self.save_memory_button = self.button('Save requirements', self.save_requirements, 'primary')
+            actions.append(self.save_memory_button)
             actions.append(self.button('Reload', lambda *_: self.load_memory()))
-            actions.append(self.button('Create instruction file', self.initialize_rules))
+            self.init_memory_button = self.button('Create instruction file', self.initialize_rules)
+            actions.append(self.init_memory_button)
             box.append(actions)
             details = self.label('Source files are indexed locally before each task. Only relevant excerpts are included. Conversations keep checkpoints and retrieve earlier related turns. For a large initial scan, run:\n\ncodehub index --project /path/to/project', 'muted')
             details.set_wrap(True)
@@ -745,23 +816,37 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 self.load_memory()
 
         def load_memory(self):
-            project = self.project.get_text()
+            project = self.current_project()
+            self.memory_project = project
+            self.save_memory_button.set_sensitive(False)
+            self.init_memory_button.set_sensitive(False)
+            self.requirements.set_editable(False)
+            self.memory_stats.set_text('Loading project memory…')
             def loaded(info):
+                if project != self.memory_project:
+                    return
                 self.requirements.get_buffer().set_text(info['requirements'])
                 files = ', '.join(item['name'] for item in info.get('guidance_files', [])) or 'No project instruction file yet'
-                self.memory_stats.set_text(f"{project}\n{info['indexed_files']} / {info['eligible_files']} source files indexed · {info['turns']} saved turns\n{files}")
+                self.memory_stats.set_text(f"{Path(project).name} · Shared project memory\n{project}\n{info['indexed_files']} / {info['eligible_files']} source files indexed · {info['turns']} saved turns\n{files}")
+                self.save_memory_button.set_sensitive(True)
+                self.init_memory_button.set_sensitive(True)
+                self.requirements.set_editable(True)
             self.background(lambda: api('project?path=' + quote(project)), loaded)
 
         def save_requirements(self, *_):
+            if not self.memory_project or not self.save_memory_button.get_sensitive():
+                return
             buffer = self.requirements.get_buffer()
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
-            project = self.project.get_text()
+            project = self.memory_project
             self.background(lambda: api('project/notes', {'project': project, 'requirements': text}),
-                            lambda _: self.memory_stats.set_text('Saved. Requirements will be retained in each task for ' + project))
+                            lambda _: self.memory_stats.set_text('Saved for all chats in ' + project) if self.memory_project == project else None)
 
         def initialize_rules(self, *_):
-            project = self.project.get_text()
-            self.background(lambda: api('project/init', {'project': project}), lambda _: self.load_memory())
+            if not self.memory_project or not self.init_memory_button.get_sensitive():
+                return
+            project = self.memory_project
+            self.background(lambda: api('project/init', {'project': project}), lambda _: self.load_memory() if self.memory_project == project else None)
 
         def build_quota_page(self):
             box = self.page_box('Usage & limits', 'usage', 'Provider allowances, reset times, and activity on this computer.')
