@@ -71,6 +71,24 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.request("/api/tasks", token="")[0], 401)
         self.assertEqual(self.request("/api/tasks", {"project": str(self.project), "prompt": "hello"}, token="wrong")[0], 401)
         self.assertEqual(self.manager.list(), [])
+        for endpoint in ('/api/projects', '/api/project', '/api/conversation'):
+            self.assertEqual(self.request(endpoint, token='')[0], 401)
+
+    def test_project_memory_and_conversations_are_scoped_to_the_selected_project(self):
+        _, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Initial question'})
+        self.wait_task(task['id'])
+        conversation = task['conversation']
+        code, followup = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Follow-up', 'conversation': conversation})
+        self.assertEqual(code, 201)
+        self.assertEqual(followup['conversation'], conversation)
+        self.wait_task(followup['id'])
+        other = self.root / 'other'
+        other.mkdir()
+        self.assertEqual(self.request('/api/tasks', {'project': str(other), 'prompt': 'wrong project', 'conversation': conversation})[0], 400)
+        self.assertEqual(self.request('/api/project/notes', {'project': str(self.project), 'requirements': 'Preserve APIs.'})[0], 200)
+        self.assertEqual(self.request('/api/project/init', {'project': str(self.project)})[0], 200)
+        self.assertTrue((self.project / 'CODING_HUB.md').is_file())
+        self.assertTrue(self.request('/api/projects')[1]['projects'])
 
     def test_foreign_origin_and_dns_rebinding_hosts_are_rejected(self):
         self.assertEqual(self.request("/api/health", origin="https://outside.example")[0], 403)
@@ -101,6 +119,16 @@ class DashboardTests(unittest.TestCase):
         for extra in ({"backend": "paid"}, {"mode": "shell"}, {"quality": "unknown"}, {"prompt": ["bad"]}, {"project": "/no-such-directory-abc"}):
             self.assertEqual(self.request("/api/tasks", dict({"project": str(self.project), "prompt": "task"}, **extra))[0], 400)
         self.assertEqual(self.manager.list(), [])
+
+    def test_smart_review_status_and_byte_limit(self):
+        data = {'project': str(self.project), 'prompt': 'अ' * 2100, 'backend': 'smart'}
+        self.assertEqual(self.request('/api/tasks', data)[0], 400)
+        self.assertEqual(self.manager.list(), [])
+        self.manager.command_factory = lambda t: [sys.executable, '-c', 'raise SystemExit(3)']
+        data['prompt'] = 'Implement checkout validation'
+        code, task = self.request('/api/tasks', data)
+        self.assertEqual(code, 201)
+        self.assertEqual(self.wait_task(task['id'])['status'], 'needs_review')
 
     def test_unknown_task_cannot_read_arbitrary_files(self):
         self.assertEqual(self.request("/api/tasks/../../private")[0], 404)

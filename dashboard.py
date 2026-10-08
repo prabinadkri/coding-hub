@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import secrets
 import signal
+import socketserver
 import subprocess
 import sys
 import threading
@@ -22,8 +23,10 @@ import uuid
 import webbrowser
 
 import hub
+import quota
+from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -51,6 +54,8 @@ class TaskManager:
                 "--backend", task["backend"], "--quality", task["quality"]]
         if task["mode"] == "build":
             args.append("--apply")
+        if task.get("conversation"):
+            args.extend(["--conversation", task["conversation"]])
         return args + ["--", task["prompt"]]
 
     def persist(self, task):
@@ -75,12 +80,17 @@ class TaskManager:
         if not project.is_dir():
             raise ValueError("The project folder does not exist.")
         backend, quality, mode = data.get("backend", "auto"), data.get("quality", "fast"), data.get("mode", "analysis")
-        if backend not in ("auto", "antigravity", "free", "local") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
+        if backend not in ("auto", "smart", "antigravity", "free", "local") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
             raise ValueError("Choose a valid route, quality and task mode.")
+        if backend == "smart" and len(prompt.encode()) > 6000:
+            raise ValueError("Smart requests are limited to 6,000 UTF-8 bytes. Split the task or choose a direct route.")
         with self.lock:
             if self.active():
                 raise RuntimeError("A task is already running. Stop it or wait for it to finish.")
+            memory = ProjectMemory(project)
+            conversation = memory.conversation(data.get("conversation"), prompt.strip())
             task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project),
+                    "conversation": conversation,
                     "backend": backend, "quality": quality, "mode": mode, "created_at": time.time(),
                     "started_at": None, "ended_at": None, "status": "queued", "exit_code": None}
             self.tasks[task["id"]] = task
@@ -111,7 +121,7 @@ class TaskManager:
                     log.flush()
             code = process.wait()
             with self.lock:
-                task["status"] = "canceled" if task["status"] == "stopping" or code in (130, 143, -2, -15) else "completed" if code == 0 else "failed"
+                task["status"] = "canceled" if task["status"] == "stopping" or code in (130, 143, -2, -15) else "completed" if code == 0 else "needs_review" if task["backend"] == "smart" and code == 3 else "failed"
                 task["exit_code"] = code
         except Exception as error:
             with path.open("a") as log:
@@ -232,9 +242,17 @@ class StatusCache:
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def server_bind(self):
+        # Loopback is known; avoid HTTPServer's reverse DNS lookup, which can
+        # block startup for tens of seconds on offline hosts and hosted macOS.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
+
     def __init__(self, address, manager=None, status=None, token=None):
         self.manager = manager or TaskManager()
         self.status = status or StatusCache()
+        self.quota = quota.QuotaCache()
         self.token = token or secrets.token_urlsafe(32)
         super().__init__(address, Handler)
 
@@ -284,9 +302,23 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/health":
                 return self.reply(200, {"app": "coding-hub", "version": VERSION})
             if parsed.path == "/api/status":
-                return self.reply(200, self.server.status.get())
+                return self.reply(200, dict(self.server.status.get(), quota=self.server.quota.get()))
+            if parsed.path == "/api/project":
+                project = parse_qs(parsed.query).get("path", [""])[0]
+                if not project:
+                    raise ValueError("Choose a project folder first.")
+                return self.reply(200, ProjectMemory(project).info())
             if parsed.path == "/api/tasks":
                 return self.reply(200, {"tasks": self.server.manager.list()})
+            if parsed.path == "/api/projects":
+                return self.reply(200, {"projects": project_tree()})
+            if parsed.path == "/api/conversation":
+                query = parse_qs(parsed.query)
+                project, identifier = query.get("project", [""])[0], query.get("id", [""])[0]
+                if not project or not identifier:
+                    raise ValueError("Choose a saved conversation.")
+                before = int(query.get("before", ["0"])[0]) or None
+                return self.reply(200, ProjectMemory(project).messages(identifier, before=before))
             if parsed.path.startswith("/api/tasks/"):
                 return self.reply(200, self.server.manager.detail(parsed.path.rsplit("/", 1)[1]))
             if parsed.path == "/api/folders":
@@ -311,8 +343,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 32768:
-                return self.reply(413, {"error": "Request must be 1–32,768 bytes."})
+            if not 0 < size <= 65536:
+                return self.reply(413, {"error": "Request must be 1–65,536 bytes."})
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 return self.reply(415, {"error": "Use application/json."})
             data = json.loads(self.rfile.read(size))
@@ -324,6 +356,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, self.server.manager.stop(data.get("id", "")))
             if self.path == "/api/refresh":
                 return self.reply(200, self.server.status.get(True))
+            if self.path == "/api/quota/refresh":
+                return self.reply(200, self.server.quota.get(True))
+            if self.path == "/api/project/notes":
+                project = data.get("project")
+                if not isinstance(project, str) or not project.strip():
+                    raise ValueError("Choose a project folder first.")
+                memory = ProjectMemory(project)
+                with hub.project_lock(memory.project):
+                    memory.remember(data.get("requirements"))
+                return self.reply(200, memory.info())
+            if self.path == "/api/project/init":
+                project = data.get("project")
+                if not isinstance(project, str) or not project.strip():
+                    raise ValueError("Choose a project folder first.")
+                memory = ProjectMemory(project)
+                with hub.project_lock(memory.project):
+                    result = memory.initialize_rules()
+                return self.reply(200, result)
             if self.path == "/api/unload":
                 if self.server.manager.active():
                     raise RuntimeError("Wait for the active task to finish before releasing memory.")

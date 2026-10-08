@@ -24,3 +24,9 @@ backups/
 installers/
 VALIDATION.txt
 GPU_SETUP.txt
+
+*.sqlite3
+*.sqlite3-*
+quota.json
+projects/
+checkpoints/

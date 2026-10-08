@@ -101,6 +101,14 @@ class HubTests(unittest.TestCase):
         text, failed = hub.event_text(json.dumps({"type": "error", "error": {"message": "429 rate limit"}}))
         self.assertEqual(hub.classify_failure(0, text, failed), "quota")
 
+    def test_chat_result_keeps_tool_events_in_logs_and_preserves_the_answer(self):
+        log = self.root / 'events.log'
+        events = [{'type': 'tool_use', 'part': {'tool': 'read', 'state': {'output': 'tool data'}}},
+                  {'type': 'text', 'part': {'text': 'The answer is 42.'}}]
+        log.write_text('\n'.join(json.dumps(event) for event in events))
+        self.assertEqual(hub.assistant_result(log), 'The answer is 42.')
+        self.assertIn('tool data', log.read_text())
+
     def test_canceled_status_stops_even_with_generic_exit_code(self):
         text, failed = hub.event_text('{"status":"CANCELED","response":""}')
         self.assertEqual(hub.classify_failure(1, text, failed), "canceled")

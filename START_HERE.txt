@@ -14,6 +14,16 @@ and revisit recent work. Analysis is the default; enable edits for implementatio
 Automatic routing: Antigravity -> verified free OpenCode models -> local Qwen 3 8B.
 Free cloud access has provider quotas. Local Qwen is best for focused, small tasks.
 
+Projects contain saved chats in the sidebar. Reply in a chat to keep its context.
+Use Project memory to pin requirements or create CODING_HUB.md.
+Check the Usage tab or browser quota card for Antigravity limits and reset times.
+
+Terminal chat: codehub chat --project ~/my-project
+Resume chat: codehub chat --project ~/my-project --continue
+Project rules: codehub init --project ~/my-project
+Prepare a large repository: codehub index --project ~/my-project
+Live quota: codehub quota
+
 Terminal menu: codehub
 Status: codehub status
 Local interactive agent: codehub open --backend local --project ~/my-project
@@ -21,3 +31,8 @@ Local interactive agent: codehub open --backend local --project ~/my-project
 Read README.md for installation, privacy, limits, and usage.
 Driver setup instructions: docs/gpu-setup.md
 Task logs and settings: ~/.local/state/coding-hub (keep these private).
+
+SMART ROUTE
+Choose Smart in the app/browser or use codehub chat --backend smart --project ~/my-project --apply.
+Antigravity plans/reviews; free/local workers implement. Maximum two manager calls per task.
+Reported token usage is shown in the result. Lower usage and equal quality are not guaranteed.
