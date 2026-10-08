@@ -15,6 +15,22 @@ import terminal_ui
 
 
 class TerminalTests(unittest.TestCase):
+    def test_delete_requires_confirmation_then_starts_a_fresh_chat(self):
+        from context_engine import ProjectMemory
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); project = root / 'project'; project.mkdir()
+            commands = iter(['/delete', 'First chat', '/delete', '', 'Follow up', '/delete', 'delete', 'Fresh chat', '/quit'])
+            out = io.StringIO()
+            with patch.object(hub, 'STATE', root / 'state'), patch('builtins.input', side_effect=lambda _: next(commands)), patch.object(hub, 'run_task', return_value=0) as run, contextlib.redirect_stdout(out):
+                self.assertEqual(hub.chat(project), 0)
+                ids = [call.kwargs['conversation'] for call in run.call_args_list]
+                self.assertEqual(ids[0], ids[1])
+                self.assertNotEqual(ids[1], ids[2])
+                self.assertEqual(ProjectMemory(project).info()['conversations'], 1)
+                self.assertEqual(ProjectMemory(project).messages(ids[2])['goal'], 'Fresh chat')
+            self.assertIn('Chat kept.', out.getvalue())
+            self.assertIn('Chat deleted.', out.getvalue())
+
     def test_commands_keep_multiline_text_mode_and_conversation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); project = root/'project'; project.mkdir()

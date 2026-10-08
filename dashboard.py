@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -93,7 +93,20 @@ class TaskManager:
 
     def list(self):
         with self.lock:
+            # CLI chat deletion also removes the corresponding saved task records.
+            self.tasks = {key: task for key, task in self.tasks.items()
+                          if task['status'] in ACTIVE or (self.directory / (key + '.json')).is_file()}
             return [dict(t) for t in sorted(self.tasks.values(), key=lambda t: t["created_at"], reverse=True)[:50]]
+
+    def delete_conversation(self, data):
+        project = data.get('project')
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError('Choose the chat’s project folder.')
+        with self.lock:
+            result = ProjectMemory(project).delete_conversation(data.get('id'), self.directory)
+            for identifier in result['task_ids']:
+                self.tasks.pop(identifier, None)
+            return result
 
     def active(self):
         return next((t for t in self.list() if t["status"] in ACTIVE), None)
@@ -118,7 +131,7 @@ class TaskManager:
         model = hub.validate_model(backend, data.get('model'))
         if backend == "smart" and len(prompt.encode()) > 6000:
             raise ValueError("Smart requests are limited to 6,000 UTF-8 bytes. Split the task or choose a direct route.")
-        with self.lock:
+        with self.lock, hub.project_lock(project):
             if self.active():
                 raise RuntimeError("A task is already running. Stop it or wait for it to finish.")
             memory = ProjectMemory(project)
@@ -174,6 +187,7 @@ class TaskManager:
 
     def detail(self, identifier):
         with self.lock:
+            self.list()
             if identifier not in self.tasks:
                 raise KeyError("Task not found.")
             task = dict(self.tasks[identifier])
@@ -458,6 +472,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {'ok': True})
             if self.path == "/api/stop":
                 return self.reply(200, self.server.manager.stop(data.get("id", "")))
+            if self.path == '/api/conversation/delete':
+                return self.reply(200, self.server.manager.delete_conversation(data))
             if self.path == "/api/refresh":
                 return self.reply(200, self.server.status.get(True))
             if self.path == "/api/quota/refresh":

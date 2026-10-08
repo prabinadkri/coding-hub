@@ -49,6 +49,7 @@ def main():
     sample_conversation = json.loads(json.dumps(conversation))
     requests = []
     posted_tasks = []
+    deleted_chats = set()
 
     def api(path, body=None):
         requests.append((path, body))
@@ -58,14 +59,17 @@ def main():
         if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
         if path == 'diagnostics': return {'text':'[OK] System disk\n20 GB free\n[OK] NVIDIA GPU\nGTX 1650'}
         if path == 'status': return status
+        if path == 'conversation/delete':
+            deleted_chats.add(body['id'])
+            return {'deleted': body['id'], 'task_ids': ['preview-task']}
         if path == 'tasks':
             if body:
                 value = dict(task, id='preview-send', conversation=body.get('conversation') or 'preview-empty-chat', scope=body.get('scope','project'), project=str(hub.general_workspace()) if body.get('scope')=='general' else body['project'], prompt=body['prompt'], status='running', created_at=time.time(), started_at=time.time(), ended_at=None)
                 posted_tasks[:] = [value]
                 return value
-            return {'tasks': posted_tasks + [task]}
+            return {'tasks': [t for t in posted_tasks + [task] if t['conversation'] not in deleted_chats]}
         if path.startswith('tasks/'): return next((t for t in posted_tasks if path.endswith(t['id'])),task)
-        if path == 'projects': return {'projects': [{'name': 'studio', 'project': project, 'conversations': [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
+        if path == 'projects': return {'projects': [{'name': 'studio', 'project': project, 'conversations': [] if 'preview-chat' in deleted_chats else [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
         if path.startswith('conversation?'):
             if 'preview-empty-chat' in path:
                 current = posted_tasks[0] if posted_tasks else {'project':project,'prompt':'Create a page'}
@@ -324,7 +328,30 @@ def main():
             app.discuss_diagnostics()
             assert app.form()['scope'] == 'general' and not app.edits.get_active()
             assert 'GTX 1650' in app.form()['prompt']
-            print(json.dumps({'rendered': 21, 'native_workflows': 'passed', 'provider_requests': 0}))
+            app.open_chat(project, 'preview-chat')
+            settle()
+            group = app.project_tree.get_first_child()
+            row = group.get_child().get_first_child().get_next_sibling()
+            assert row.get_last_child().get_tooltip_text().startswith('Delete chat:')
+            row.get_last_child().emit('clicked')
+            settle()
+            capture(app.delete_dialog, 'desktop-delete-light.png')
+            app.delete_dialog.response(Gtk.ResponseType.CANCEL)
+            settle()
+            assert not any(p == 'conversation/delete' for p, b in requests)
+            assert app.conversation == 'preview-chat'
+            app.theme_switch.set_active(True)
+            app.confirm_delete_chat(project, 'preview-chat', task['prompt'])
+            settle()
+            capture(app.delete_dialog, 'desktop-delete-dark.png')
+            app.delete_dialog.response(Gtk.ResponseType.ACCEPT)
+            settle(.7)
+            assert any(p == 'conversation/delete' and b['id'] == 'preview-chat' for p, b in requests)
+            assert app.conversation is None and not app.message_archive
+            assert not app.tasks and not app.deleting_chat
+            assert not app.error.get_visible(), app.error.get_text()
+            assert json.loads(app.draft_path.read_text())['conversation'] is None
+            print(json.dumps({'rendered': 23, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

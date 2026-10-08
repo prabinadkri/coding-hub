@@ -129,3 +129,6 @@ window:not(.dark) entry selection, window:not(.dark) textview text selection { b
 .pending-title { color: #42643a; font-size: 13px; font-weight: 600; }
 .dark .pending-title { color: #b2cba3; }
 .pending-message spinner { color: #7d9d67; }
+
+.sidebar button.chat-delete{min-width:18px;min-height:18px;padding:5px;color:#99ae9d;background:transparent;}.sidebar button.chat-delete:hover{background:#503d37;color:#ffd2cc;}
+messagedialog button.destructive-action{background:#a83c32;color:#ffffff;}

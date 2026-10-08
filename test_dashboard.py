@@ -75,6 +75,35 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.manager.list(), [])
         for endpoint in ('/api/projects', '/api/project', '/api/conversation', '/api/changes'):
             self.assertEqual(self.request(endpoint, token='')[0], 401)
+        self.assertEqual(self.request('/api/conversation/delete', {}, token='')[0], 401)
+
+    def test_delete_endpoint_removes_history_and_rejects_active_chat(self):
+        code, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Disposable chat'})
+        self.assertEqual(code, 201)
+        self.wait_task(task['id'])
+        body = {'project': str(self.project), 'id': task['conversation']}
+        self.assertEqual(self.request('/api/conversation/delete', body, origin='https://outside.example')[0], 403)
+        with self.manager.lock:
+            self.manager.tasks[task['id']]['status'] = 'queued'
+            self.manager.persist(self.manager.tasks[task['id']])
+        self.assertEqual(self.request('/api/conversation/delete', body)[0], 409)
+        with self.manager.lock:
+            self.manager.tasks[task['id']]['status'] = 'completed'
+            self.manager.persist(self.manager.tasks[task['id']])
+        self.assertEqual(self.request('/api/conversation/delete', body)[0], 200)
+        self.assertEqual(self.request('/api/tasks')[1]['tasks'], [])
+        self.assertEqual(self.request('/api/tasks/' + task['id'])[0], 404)
+        self.assertEqual(self.request('/api/projects')[1]['projects'][0]['conversations'], [])
+        self.assertFalse((self.manager.directory / (task['id'] + '.log')).exists())
+        restarted = dashboard.TaskManager(self.manager.directory)
+        self.assertEqual(restarted.list(), [])
+
+    def test_cli_deletion_is_reflected_by_running_dashboard(self):
+        _, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Delete elsewhere'})
+        self.wait_task(task['id'])
+        dashboard.ProjectMemory(self.project).delete_conversation(task['conversation'], self.manager.directory)
+        self.assertEqual(self.request('/api/tasks')[1]['tasks'], [])
+        self.assertEqual(self.request('/api/tasks/' + task['id'])[0], 404)
 
     def test_progress_uses_observed_stages_and_keeps_completed_tools_in_the_past(self):
         task = {'status':'running'}

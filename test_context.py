@@ -22,6 +22,74 @@ class ContextTests(unittest.TestCase):
         self.state.stop()
         self.temp.cleanup()
 
+    def test_delete_chat_removes_local_history_but_preserves_project_memory(self):
+        from context_engine import project_tree
+        source = self.project / 'billing.py'
+        source.write_text('def billing_total(): return 42\n')
+        self.memory.index()
+        self.memory.remember('Keep the public API stable.')
+        self.memory.initialize_rules()
+        deleted = self.memory.conversation(goal='Delete me')
+        kept = self.memory.conversation(goal='Keep me')
+        self.memory.record(deleted, 'removed-run', 'privateword', 'privateword answer', 'completed')
+        self.memory.record(kept, 'kept-run', 'Keep this', 'Preserved answer', 'completed')
+        for task, chat in [('removed-run', deleted), ('kept-run', kept), ('interrupted-run', deleted)]:
+            folder = hub.private_dir(hub.STATE / 'tasks' / task)
+            hub.save_json(folder / 'context.json', {'conversation': chat})
+            (folder / 'changes.json').write_text('{}')
+        dashboard = hub.private_dir(hub.STATE / 'dashboard' / 'tasks')
+        hub.save_json(dashboard / 'old-task.json', {'project': str(self.project.resolve()), 'conversation': deleted, 'status': 'completed'})
+        (dashboard / 'old-task.log').write_text('privateword')
+        result = self.memory.delete_conversation(deleted)
+        self.assertEqual(result['task_ids'], ['old-task'])
+        self.assertFalse(list(dashboard.iterdir()))
+        self.assertFalse((hub.STATE / 'tasks' / 'removed-run').exists())
+        self.assertFalse((hub.STATE / 'tasks' / 'interrupted-run').exists())
+        self.assertTrue((hub.STATE / 'tasks' / 'kept-run' / 'changes.json').exists())
+        self.assertFalse((self.memory.directory / 'checkpoints' / 'removed-run.json').exists())
+        self.assertEqual(self.memory.messages(kept)['turns'][0]['result'], 'Preserved answer')
+        self.assertEqual(self.memory.notes(), 'Keep the public API stable.')
+        self.assertTrue((self.project / 'CODING_HUB.md').exists())
+        self.assertTrue(self.memory.search('billing'))
+        self.assertEqual(source.read_text(), 'def billing_total(): return 42\n')
+        with self.memory.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM turns WHERE turns MATCH ?', ('privateword',)).fetchone()[0], 0)
+        self.assertEqual([c['id'] for c in project_tree()[0]['conversations']], [kept])
+        with self.assertRaises(ValueError):
+            self.memory.record(deleted, 'late-run', 'late', 'late', 'completed')
+        with self.assertRaises(ValueError):
+            self.memory.delete_conversation(deleted)
+
+    def test_delete_refuses_busy_workspace_invalid_ids_and_other_project(self):
+        chat = self.memory.conversation(goal='Keep while running')
+        with hub.project_lock(self.project), self.assertRaises(RuntimeError):
+            self.memory.delete_conversation(chat)
+        directory = hub.private_dir(hub.STATE / 'dashboard' / 'tasks')
+        for status in ('queued', 'running', 'stopping'):
+            hub.save_json(directory / 'active.json', {'project': str(self.project.resolve()), 'conversation': chat, 'status': status})
+            with self.assertRaises(RuntimeError):
+                self.memory.delete_conversation(chat)
+        other = self.root / 'other'; other.mkdir()
+        for identifier in (None, '../outside', 'a' * 32):
+            with self.assertRaises(ValueError):
+                self.memory.delete_conversation(identifier)
+        with self.assertRaises(ValueError):
+            ProjectMemory(other).delete_conversation(chat)
+        self.assertEqual(self.memory.messages(chat)['goal'], 'Keep while running')
+
+    def test_delete_never_follows_task_symlinks_or_traversal(self):
+        chat = self.memory.conversation(goal='Remove')
+        outside = self.root / 'outside'; outside.mkdir()
+        (outside / 'keep.txt').write_text('keep')
+        task_root = hub.private_dir(hub.STATE / 'tasks')
+        (task_root / 'linked-task').symlink_to(outside, target_is_directory=True)
+        self.memory.record(chat, 'linked-task', 'q', 'a', 'completed')
+        with self.memory.connect() as db:
+            db.execute('INSERT INTO turns VALUES(?,?,?,?,?,?)', (chat, '../../outside', 'q', 'a', 'completed', 0))
+        self.memory.delete_conversation(chat)
+        self.assertEqual((outside / 'keep.txt').read_text(), 'keep')
+        self.assertFalse((task_root / 'linked-task').is_symlink())
+
     def test_new_projects_and_chats_sort_first_despite_old_clock_skew(self):
         from context_engine import project_tree
         first = self.memory.conversation(goal='Old chat')

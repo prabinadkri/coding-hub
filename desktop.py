@@ -129,6 +129,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.tasks = []
             self.history_signature = None
             self.refreshing = False
+            self.history_epoch = 0
+            self.deleting_chat = False
             self.connected = False
             self.memory_project = None
             self.chat_layout = None
@@ -766,20 +768,37 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
         def refresh(self):
             if self.closed_window:
                 return False
-            if self.refreshing:
+            if self.refreshing or self.deleting_chat:
                 return True
             self.refreshing = True
+            epoch = self.history_epoch
             selected = self.selected
             conversation, project = self.conversation, self.conversation_project
             def fetch():
                 status = api("status")
                 tasks = api("tasks")["tasks"]
                 identifier = selected or next((t["id"] for t in tasks if conversation and t.get('conversation') == conversation and t["status"] in dashboard.ACTIVE), None)
-                detail = api("tasks/" + identifier) if identifier else None
+                detail = api("tasks/" + identifier) if identifier and any(t['id'] == identifier for t in tasks) else None
                 tree = api('projects')['projects']
-                messages = api('conversation?project=' + quote(project) + '&id=' + conversation) if conversation else None
+                try:
+                    messages = api('conversation?project=' + quote(project) + '&id=' + conversation) if conversation else None
+                except RuntimeError as error:
+                    if 'Conversation does not belong' not in str(error):
+                        raise
+                    messages = {'deleted': conversation}
                 return status, tasks, detail, tree, messages
-            self.background(fetch, self.refreshed)
+            def refreshed(result):
+                self.refreshing = False
+                if epoch == self.history_epoch:
+                    self.refreshed(result)
+                else:
+                    self.refresh()
+            def failed(error):
+                self.refreshing = False
+                if epoch == self.history_epoch:
+                    self.error.set_text(str(error))
+                    self.error.set_visible(True)
+            self.background(fetch, refreshed, failed)
             return True
 
         def refreshed(self, result):
@@ -791,7 +810,11 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.render_quota(status.get('quota', {}))
             self.render_free_quota(status.get('free_quota', {}))
             if messages:
-                self.render_messages(messages)
+                if 'deleted' in messages:
+                    if messages['deleted'] == self.conversation:
+                        self.new_task()
+                else:
+                    self.render_messages(messages)
             if not status.get("checking"):
                 if not self.connected:
                     self.connected = True
@@ -851,12 +874,23 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     button.set_tooltip_text(title)
                     if chat['id'] == self.conversation:
                         button.add_css_class('active-chat')
-                    chats.append(button)
+                    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+                    button.set_hexpand(True)
+                    row.append(button)
+                    remove = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+                    remove.add_css_class('chat-delete')
+                    remove.set_tooltip_text('Delete chat: ' + title)
+                    remove.connect('clicked', lambda _, p=project['project'], c=chat['id'], title=title: self.confirm_delete_chat(p, c, title))
+                    row.append(remove)
+                    chats.append(row)
                 group.set_child(chats)
                 self.project_tree.append(group)
 
         def open_chat(self, project, identifier, task=None):
+            epoch = self.history_epoch
             def opened(data):
+                if epoch != self.history_epoch:
+                    return
                 self.follow_chat = True
                 self.conversation = identifier
                 self.conversation_project = project
@@ -876,6 +910,43 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.save_draft()
                 self.refresh()
             self.background(lambda: api('conversation?project=' + quote(project) + '&id=' + identifier), opened)
+
+        def confirm_delete_chat(self, project, identifier, title):
+            dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                message_type=Gtk.MessageType.QUESTION, text='Delete this chat?',
+                secondary_text='“' + title[:160] + '”\n\nThis removes its local messages and task logs. Project files and shared memory are kept. This cannot be undone.')
+            dialog.add_button('Cancel', Gtk.ResponseType.CANCEL)
+            button = dialog.add_button('Delete chat', Gtk.ResponseType.ACCEPT)
+            button.add_css_class('destructive-action')
+            dialog.set_default_response(Gtk.ResponseType.CANCEL)
+            def response(window, choice):
+                window.destroy()
+                if choice == Gtk.ResponseType.ACCEPT:
+                    self.delete_chat(project, identifier)
+            dialog.connect('response', response)
+            self.delete_dialog = dialog
+            dialog.present()
+
+        def delete_chat(self, project, identifier):
+            if self.deleting_chat:
+                return
+            self.deleting_chat = True
+            self.history_epoch += 1
+            def deleted(result):
+                self.deleting_chat = False
+                self.history_epoch += 1
+                self.tasks = [t for t in self.tasks if t.get('conversation') != identifier]
+                if self.conversation == identifier:
+                    self.new_task()
+                self.tree_signature = None
+                self.history_signature = None
+                self.refresh()
+            def failed(error):
+                self.deleting_chat = False
+                self.error.set_text(str(error))
+                self.error.set_visible(True)
+                self.refresh()
+            self.background(lambda: api('conversation/delete', {'project': project, 'id': identifier}), deleted, failed)
 
         def render_messages(self, data):
             if data['id'] != self.conversation:

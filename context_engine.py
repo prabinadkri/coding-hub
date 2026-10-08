@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -248,11 +249,75 @@ class ProjectMemory:
 
     def record(self, conversation, task, request, result, status):
         with self.connect() as db:
+            if not db.execute('SELECT 1 FROM conversations WHERE id=?', (conversation,)).fetchone():
+                raise ValueError('This chat no longer exists. Start a new chat.')
             db.execute('INSERT INTO turns VALUES(?,?,?,?,?,?)', (conversation, task, request, result, status, time.time()))
             db.execute('UPDATE conversations SET updated=? WHERE id=?', (time.time(), conversation))
         # Immutable individual checkpoints survive process restarts and remain inspectable.
         hub.save_json(self.directory / 'checkpoints' / (task + '.json'),
             {'conversation': conversation, 'task': task, 'request': request, 'result': result, 'status': status, 'saved_at': time.time()})
+
+    def delete_conversation(self, identifier, task_directory=None):
+        """Delete one local chat under the same workspace lock used by agents."""
+        if not isinstance(identifier, str) or not re.fullmatch(r'[a-f0-9]{32}', identifier):
+            raise ValueError('Invalid conversation identifier.')
+        directory = Path(task_directory or hub.STATE / 'dashboard' / 'tasks')
+        with hub.project_lock(self.project), self.connect() as db:
+            for root in (directory, self.directory / 'checkpoints', hub.STATE / 'tasks'):
+                if root.is_symlink():
+                    raise ValueError('Chat storage points outside its expected folder. Deletion was canceled.')
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM conversations WHERE id=?', (identifier,)).fetchone():
+                raise ValueError('This chat no longer exists in this project.')
+            dashboard_files, dashboard_ids = [], []
+            for path in directory.glob('*.json'):
+                if path.is_symlink():
+                    continue
+                try:
+                    item = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(item, dict) or item.get('project') != str(self.project):
+                    continue
+                if item.get('status') in ('queued', 'running', 'stopping'):
+                    raise RuntimeError('Wait for the running task in this workspace to finish before deleting a chat.')
+                if item.get('conversation') == identifier:
+                    dashboard_files.extend([path, path.with_suffix('.log')])
+                    dashboard_ids.append(path.stem)
+            task_ids = {r[0] for r in db.execute('SELECT task FROM turns WHERE conversation=?', (identifier,))}
+            # Interrupted runs can have logs without a completed turn/checkpoint.
+            for folder in (hub.STATE / 'tasks').glob('*'):
+                if folder.is_symlink() or not folder.is_dir():
+                    continue
+                for name in ('task.json', 'context.json'):
+                    path = folder / name
+                    if path.is_symlink():
+                        continue
+                    try:
+                        item = json.loads(path.read_text())
+                        if isinstance(item, dict) and item.get('conversation') == identifier:
+                            task_ids.add(folder.name)
+                            break
+                    except (OSError, ValueError):
+                        continue
+            for task in task_ids:
+                if not isinstance(task, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', task):
+                    continue
+                if db.execute('SELECT 1 FROM turns WHERE task=? AND conversation<>?', (task, identifier)).fetchone():
+                    continue
+                checkpoint = self.directory / 'checkpoints' / (task + '.json')
+                checkpoint.unlink(missing_ok=True)
+                folder = hub.STATE / 'tasks' / task
+                if folder.is_symlink():
+                    folder.unlink()
+                elif folder.is_dir():
+                    shutil.rmtree(folder)
+            for path in dashboard_files:
+                path.unlink(missing_ok=True)
+            db.execute('DELETE FROM turns WHERE conversation=?', (identifier,))
+            db.execute('DELETE FROM conversations WHERE id=?', (identifier,))
+        recovered_reply.cache_clear()
+        return {'deleted': identifier, 'task_ids': dashboard_ids}
 
     def context(self, conversation, request, budget=12500):
         notes = self.notes()

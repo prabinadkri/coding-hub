@@ -741,6 +741,15 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                     conversation = None
                     diagnostic_context = None
                     print('New conversation ready. Project memory is retained.'); continue
+                if name == '/delete':
+                    if not conversation:
+                        print('There is no current chat to delete.'); continue
+                    print('Delete this chat and its local task logs? Project files and shared memory are kept.')
+                    if input('Type delete to confirm, or Enter to cancel: ').strip().lower() != 'delete':
+                        print('Chat kept.'); continue
+                    memory.delete_conversation(conversation)
+                    conversation, diagnostic_context = None, None
+                    print('Chat deleted. New conversation ready.'); continue
                 if name == '/changes':
                     from change_review import show
                     show(memory.project); continue

@@ -98,6 +98,7 @@ Inside `codehub chat`:
 - `/edit on` enables commands and requested changes; `/edit off` returns to analysis mode.
 - `/doctor` prints a read-only system report and includes it in your next message. `/new` clears that pending report.
 - `/changes` reviews the latest task diff; `/memory` shows shared instructions and source-index coverage; `/status` shows the current setup.
+- `/delete` removes the current chat after you type `delete` to confirm. Enter cancels. Project files and shared memory stay intact.
 - `/new` starts another conversation; `/quit` exits. Existing `:commands` still work.
 - Ctrl+C cancels active work and preserves partial changes. At the input prompt, Ctrl+C exits the chat.
 
@@ -197,6 +198,14 @@ The result shows the provider-reported manager token total; the full breakdown i
 
 In one paired checkout-validation test, Smart used **8,171 reported Antigravity tokens** versus **122,733** for direct Antigravity, about **93.3% less**. Both passed the same eight independent acceptance checks. This small example is not a general quality or savings guarantee; worker tokens are excluded from this Antigravity-only comparison. See [the benchmark details](docs/smart-benchmark.md).
 
+## Delete a chat
+
+In the app or browser, click the small trash icon beside a chat in the sidebar, then choose **Delete chat**. **Cancel** keeps it. In the terminal, use `/delete` in the current conversation and type `delete` to confirm.
+
+Deletion removes that chat’s saved messages, searchable conversation history, checkpoints, task activity, logs, and change previews from Coding Hub’s local state. It cannot be undone. Project files (including any changes made during the chat), shared pinned requirements, instruction files, the source index, and other chats are kept. Provider-side sessions and usage records are managed separately by their providers. Wait for any active task in that workspace to finish before deleting a chat.
+
+Deleting the open chat takes you to a fresh chat. The app and browser refresh their shared history automatically; a terminal whose chat was deleted elsewhere must use `/new` before sending another task.
+
 ## Project instructions and long conversations
 
 Use **Project memory** in the app or browser to pin requirements that should apply to every task. Pinned text is kept verbatim, up to 4,000 UTF-8 bytes. It is saved privately outside the project. To create an editable instruction file inside a repository:
@@ -290,7 +299,7 @@ python3 -m unittest discover -p 'test_*.py' -v
 python3 hub.py web
 ```
 
-The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all six pages and existing conversations at two window widths, plus dark-mode previews. It checks Ctrl+Enter, scroll following, reading-position preservation, compact composer size, model selection, temporary sign-in controls, theme persistence, message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
+The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all six pages and existing conversations at two window widths, plus dark-mode previews. It checks chat deletion and cancellation, Ctrl+Enter, scroll following, reading-position preservation, compact composer size, model selection, temporary sign-in controls, theme persistence, message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
 
 To run that Linux UI check (requires GTK 4, PyGObject, Xvfb, and a session bus):
 
