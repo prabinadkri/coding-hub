@@ -22,6 +22,19 @@ class ContextTests(unittest.TestCase):
         self.state.stop()
         self.temp.cleanup()
 
+    def test_new_projects_and_chats_sort_first_despite_old_clock_skew(self):
+        from context_engine import project_tree
+        first = self.memory.conversation(goal='Old chat')
+        with self.memory.connect() as db:
+            db.execute('UPDATE conversations SET updated=?', (9999999999,))
+        second = self.memory.conversation(goal='New chat')
+        other = self.root / 'new-project'; other.mkdir()
+        memory = ProjectMemory(other); memory.conversation(goal='Start here')
+        projects = project_tree()
+        self.assertEqual(projects[0]['project'], str(other.resolve()))
+        existing = next(p for p in projects if p['project'] == str(self.project.resolve()))
+        self.assertEqual([c['id'] for c in existing['conversations']], [second, first])
+
     def test_old_replies_recover_assistant_text_without_rewriting_history(self):
         chat = self.memory.conversation(goal='Review code')
         original = '[tool] read · completed\nsource code\nThe answer is 42.'

@@ -5,6 +5,7 @@ import concurrent.futures
 import json
 import os
 import signal
+import traceback
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote
@@ -124,6 +125,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.message_signature = None
             self.message_archive = {}
             self.archive_conversation = None
+            self.pending_indicator = None
             self.tasks = []
             self.history_signature = None
             self.refreshing = False
@@ -250,11 +252,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             sidebar.append(brand)
             sidebar.append(self.label('YOUR CODING WORKSPACE', 'brand-caption'))
             new = self.button('+  New chat', self.new_task, 'new-chat')
-            new.set_margin_top(18)
-            new.set_margin_bottom(12)
+            new.set_margin_top(10)
+            new.set_margin_bottom(0)
             new.set_tooltip_text('New conversation · Ctrl+N')
             sidebar.append(new)
-            sidebar.append(self.label('WORKSPACE', 'section'))
+            sidebar.append(self.button('+  New project', self.new_project, 'new-project'))
+            tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE,
                                    hhomogeneous=False, vhomogeneous=False, hexpand=True, vexpand=True)
             self.navigation = {}
@@ -271,15 +274,19 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 row.append(self.label(title))
                 button.set_child(row)
                 self.navigation[name] = button
-                sidebar.append(button)
+                (sidebar if name == 'workspace' else tools_box).append(button)
             project_heading = self.label('PROJECTS & CHATS', 'section')
-            project_heading.set_margin_top(20)
+            project_heading.set_margin_top(6)
             sidebar.append(project_heading)
             self.project_tree = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             tree_scroll = Gtk.ScrolledWindow(vexpand=True)
             tree_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             tree_scroll.set_child(self.project_tree)
             sidebar.append(tree_scroll)
+            self.sidebar_tree_scroll = tree_scroll
+            self.sidebar_tools = Gtk.Expander(label='Tools & settings', expanded=False)
+            self.sidebar_tools.set_child(tools_box)
+            sidebar.append(self.sidebar_tools)
             sidebar.append(self.label('Local workspace', 'sidebar-foot'))
             sidebar.append(self.label('Version ' + dashboard.VERSION, 'sidebar-foot'))
             shell.append(sidebar)
@@ -300,6 +307,15 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             body.set_spacing(10)
             self.chat_memory_button = self.button('Project memory', lambda *_: self.stack.set_visible_child_name('memory'))
             self.page_header_rows['workspace'].append(self.chat_memory_button)
+            self.scope_row = self.row()
+            scope_label = self.label('Task type', 'muted')
+            scope_label.set_wrap(False)
+            self.scope_row.append(scope_label)
+            self.scope = Gtk.DropDown.new_from_strings(['General task', 'Project task'])
+            self.scope.set_selected(0)
+            self.scope.connect('notify::selected', lambda *_: self.sync_chat_layout() if hasattr(self, 'composer_title') else None)
+            self.scope_row.append(self.scope)
+            body.append(self.scope_row)
             self.project_card = self.card()
             self.project_card.append(self.label('Project', 'section-title'))
             project_row = self.row()
@@ -366,7 +382,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             settings_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             settings_body.append(options)
             self.model_row = self.row()
-            self.model_row.append(self.label('Model', 'muted'))
+            model_label = self.label('Model', 'muted')
+            model_label.set_wrap(False)
+            self.model_row.append(model_label)
             self.model_picker = Gtk.DropDown.new_from_strings(['Use route default'])
             self.model_picker.set_hexpand(True)
             self.model_picker.connect('notify::selected', self.model_changed)
@@ -411,6 +429,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             try:
                 draft = json.loads(self.draft_path.read_text())
                 self.project.set_text(draft.get("project", str(Path.home() / "Documents")))
+                self.scope.set_selected(0 if draft.get("scope") == "general" or not draft else 1)
                 self.conversation = draft.get("conversation")
                 self.conversation_project = self.project.get_text() if self.conversation else ''
                 self.project.set_editable(not bool(self.conversation))
@@ -432,7 +451,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             GLib.timeout_add_seconds(5, self.save_draft)
             GLib.timeout_add(600, self.poll_signin)
 
-        def background(self, work, callback):
+        def background(self, work, callback, on_error=None):
             future = self.executor.submit(work)
             def done(result):
                 def finish():
@@ -442,6 +461,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                         callback(result.result())
                     except Exception as error:
                         print("App request failed: " + str(error), file=sys.stderr, flush=True)
+                        traceback.print_exc()
+                        if on_error:
+                            on_error(error)
+                            return False
                         self.error.set_text(str(error))
                         self.error.set_visible(True)
                         self.connection.set_text('Connection needs attention')
@@ -465,6 +488,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def theme_changed(self, *_):
             dark = self.theme_switch.get_active()
+            Gtk.Settings.get_default().set_property('gtk-theme-name', 'Adwaita')
             Gtk.Settings.get_default().set_property('gtk-application-prefer-dark-theme', dark)
             if dark:
                 self.window.add_css_class('dark')
@@ -500,7 +524,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def form(self):
             buffer = self.prompt.get_buffer()
-            return {"project": self.current_project(),
+            return {"project": self.current_project(), 'scope': 'general' if self.scope.get_selected() == 0 else 'project',
                     "prompt": buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True),
                     "backend": routes[self.route.get_selected()],
                     "quality": "deep" if self.quality.get_selected() == 1 else "fast",
@@ -512,7 +536,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def sync_chat_layout(self):
             existing = bool(self.conversation)
-            self.project_card.set_visible(not existing)
+            general = self.scope.get_selected() == 0
+            self.scope_row.set_visible(not existing)
+            self.project_card.set_visible(not existing and not general)
+            self.chat_memory_button.set_visible(existing or not general)
+            self.chat_memory_button.set_label('Memory' if general else 'Project memory')
+            self.edits.set_label('Allow commands & changes' if general else 'Allow edits & commands')
             self.project.set_editable(not existing)
             self.browse_button.set_sensitive(not existing)
             self.composer_title.set_text('Reply' if existing else 'Your message')
@@ -527,11 +556,11 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.chat_layout = existing
             if existing:
                 self.workspace_body.add_css_class('conversation-page')
-                self.chat_subtitle.set_text(Path(self.conversation_project).name + ' · Saved conversation')
-                self.chat_subtitle.set_tooltip_text(self.conversation_project)
+                self.chat_subtitle.set_text(('General task' if general else Path(self.conversation_project).name) + ' · Saved conversation')
+                self.chat_subtitle.set_tooltip_text(None if general else self.conversation_project)
             else:
                 self.workspace_body.remove_css_class('conversation-page')
-                self.chat_subtitle.set_text('Choose a project and start a focused conversation.')
+                self.chat_subtitle.set_text('Ask a question, diagnose Linux, or describe a standalone task.' if general else 'Choose a project and start a focused conversation.')
                 self.chat_subtitle.set_tooltip_text(None)
 
         def save_draft(self):
@@ -601,14 +630,26 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             dialog.show()
             self.folder_dialog = dialog
 
+        def new_project(self, *_):
+            self.new_task()
+            self.scope.set_selected(1)
+            self.project.set_text('')
+            self.save_draft()
+            self.browse()
+
         def new_task(self, *_):
             self.follow_chat = True
             self.latest_button.set_visible(False)
             self.conversation = None
+            self.scope.set_selected(0)
             self.conversation_project = ''
+            self.message_archive = {}
+            self.archive_conversation = None
+            self.pending_indicator = None
             self.message_signature = None
             self.chat_scroll.set_visible(False)
             self.chat_title.set_text("New conversation")
+            self.chat_title.set_tooltip_text(None)
             self.project.set_editable(True)
             self.browse_button.set_sensitive(True)
             self.stack.set_visible_child_name("workspace")
@@ -620,7 +661,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.error.set_visible(False)
             self.sync_chat_layout()
             self.output_details.set_expanded(False)
+            self.output_details.set_label('Task activity')
             self.stop_button.set_sensitive(False)
+            self.stop_button.set_visible(False)
             self.save_draft()
             self.prompt.grab_focus()
 
@@ -638,6 +681,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.selected = task["id"]
                 self.conversation = task['conversation']
                 self.conversation_project = task['project']
+                self.scope.set_selected(0 if task.get('scope') == 'general' else 1)
                 self.sync_chat_layout()
                 self.project.set_editable(False)
                 self.browse_button.set_sensitive(False)
@@ -730,7 +774,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             def fetch():
                 status = api("status")
                 tasks = api("tasks")["tasks"]
-                identifier = selected or next((t["id"] for t in tasks if t["status"] in dashboard.ACTIVE), None)
+                identifier = selected or next((t["id"] for t in tasks if conversation and t.get('conversation') == conversation and t["status"] in dashboard.ACTIVE), None)
                 detail = api("tasks/" + identifier) if identifier else None
                 tree = api('projects')['projects']
                 messages = api('conversation?project=' + quote(project) + '&id=' + conversation) if conversation else None
@@ -741,6 +785,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
         def refreshed(self, result):
             self.refreshing = False
             status, self.tasks, detail, tree, messages = result
+            if detail:
+                self.tasks = [detail if t['id'] == detail['id'] else t for t in self.tasks]
             self.render_tree(tree)
             self.render_quota(status.get('quota', {}))
             self.render_free_quota(status.get('free_quota', {}))
@@ -758,7 +804,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.connection.set_text('●  Connected locally')
             self.run_button.set_sensitive(not any(t["status"] in dashboard.ACTIVE for t in self.tasks))
             if detail:
-                if self.selected is None and detail["status"] in dashboard.ACTIVE:
+                if self.selected is None and self.conversation and detail.get('conversation') == self.conversation and detail["status"] in dashboard.ACTIVE:
                     self.selected = detail["id"]
                 self.show_task(detail)
 
@@ -792,6 +838,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 group.set_expanded(project['project'] == self.conversation_project or expanded.get(project['project'], len(projects) == 1))
                 chats = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
                 chats.set_margin_start(12)
+                def new_in_project(_, path=project['project']):
+                    self.new_task()
+                    self.scope.set_selected(0 if hub.is_general(path) else 1)
+                    self.project.set_text(path)
+                    self.save_draft()
+                chats.append(self.button('+ New chat', new_in_project, 'project-new-chat'))
                 for chat in project['conversations']:
                     title = chat['goal'].replace('\n', ' ')
                     button = self.button(title[:25] + ('…' if len(title) > 25 else ''),
@@ -800,11 +852,6 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     if chat['id'] == self.conversation:
                         button.add_css_class('active-chat')
                     chats.append(button)
-                def new_in_project(_, path=project['project']):
-                    self.new_task()
-                    self.project.set_text(path)
-                    self.save_draft()
-                chats.append(self.button('+ New chat', new_in_project))
                 group.set_child(chats)
                 self.project_tree.append(group)
 
@@ -813,6 +860,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.follow_chat = True
                 self.conversation = identifier
                 self.conversation_project = project
+                self.scope.set_selected(0 if data.get('scope') == 'general' else 1)
                 self.selected = task['id'] if task else None
                 self.project.set_text(project)
                 self.sync_chat_layout()
@@ -841,6 +889,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             active = next((t for t in self.tasks if t.get('conversation') == self.conversation and t['status'] in dashboard.ACTIVE), None)
             signature = json.dumps(all_turns) + str(active.get('id') if active else '')
             if signature == self.message_signature:
+                self.update_pending_indicator(active)
                 return
             previous_scroll = self.chat_scroll.get_vadjustment().get_value()
             previous_height = self.chat_scroll.get_vadjustment().get_upper()
@@ -906,7 +955,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 if not user:
                     row.append(gutter)
                 self.chat_messages.append(row)
-            if data['total_turns'] > len(all_turns):
+            if all_turns and data['total_turns'] > len(all_turns):
                 before = all_turns[0]['rowid']
                 endpoint = 'conversation?project=' + quote(self.conversation_project) + '&id=' + self.conversation + '&before=' + str(before)
                 self.chat_messages.append(self.button('Load earlier messages', lambda *_: self.background(lambda: api(endpoint), self.render_messages)))
@@ -915,7 +964,20 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 add('Coding Hub', turn['result'] or 'No final response was saved.', turn['status'], turn)
             if active:
                 add('You', active['prompt'])
-                add('Coding Hub', 'Working on your request…')
+                indicator = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+                indicator.add_css_class('pending-message')
+                line = self.row(8)
+                spinner = Gtk.Spinner(spinning=True)
+                spinner.set_size_request(16,16)
+                title = self.label('Working…', 'pending-title')
+                line.append(spinner); line.append(title)
+                detail = self.label('', 'muted')
+                indicator.append(line); indicator.append(detail)
+                self.chat_messages.append(indicator)
+                self.pending_indicator = (active['id'], title, detail)
+                self.update_pending_indicator(active)
+            else:
+                self.pending_indicator = None
             if self.follow_chat and not earlier:
                 self.queue_chat_scroll()
             else:
@@ -927,6 +989,14 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     self.chat_scrolled(adjustment)
                     return False
                 GLib.idle_add(preserve_position, priority=GLib.PRIORITY_LOW)
+
+        def update_pending_indicator(self, task):
+            if not task or not self.pending_indicator or self.pending_indicator[0] != task['id']:
+                return
+            progress = task.get('progress') or dashboard.task_progress(task, task.get('output', ''))
+            self.pending_indicator[1].set_text(progress['label'])
+            elapsed = max(0, int(time.time() - (task.get('started_at') or task['created_at'])))
+            self.pending_indicator[2].set_text(str(elapsed // 60) + 'm ' + str(elapsed % 60) + 's · ' + progress['detail'])
 
         def message_action(self, text, icon, callback):
             button = self.button('', callback, 'message-action')
@@ -1072,8 +1142,41 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.hardware_age = self.label('Waiting for a live sample', 'footnote')
             hardware.append(self.hardware_age)
             box.append(hardware)
+            doctor = self.card(12)
+            self.doctor_button = self.button('Run system check', self.diagnose_system)
+            doctor.append(self.section_heading('System diagnostics', self.doctor_button))
+            doctor.append(self.label('Read-only checks for disk space, memory, GPU, services, and time settings.', 'muted'))
+            self.doctor_report = self.label('', 'muted')
+            self.doctor_report.set_selectable(True)
+            self.doctor_report.set_visible(False)
+            doctor.append(self.doctor_report)
+            self.doctor_discuss = self.button('Discuss in general chat', self.discuss_diagnostics)
+            self.doctor_discuss.set_visible(False)
+            doctor.append(self.doctor_discuss)
+            box.append(doctor)
             box.append(self.section_heading('Provider access', self.button('View usage & limits →', lambda *_: self.stack.set_visible_child_name('usage'))))
             box.append(self.label('Cloud routes use provider limits. Local Qwen has no provider quota; speed depends on your hardware. Releasing the local model frees memory and it loads again when needed.', 'muted'))
+
+        def diagnose_system(self, *_):
+            self.doctor_button.set_sensitive(False)
+            self.doctor_report.set_visible(True)
+            self.doctor_report.set_text('Checking your system…')
+            def loaded(data):
+                self.diagnostics = data['text']
+                self.doctor_report.set_text(self.diagnostics)
+                self.doctor_button.set_sensitive(True)
+                self.doctor_discuss.set_visible(True)
+            def failed(error):
+                self.doctor_button.set_sensitive(True)
+                self.doctor_report.set_text('Could not check the system: ' + str(error))
+            self.background(lambda: api('diagnostics'), loaded, failed)
+
+        def discuss_diagnostics(self, *_):
+            import system_diagnostics
+            self.new_task()
+            self.edits.set_active(False)
+            self.prompt.get_buffer().set_text(system_diagnostics.prompt(self.diagnostics))
+            self.save_draft()
 
         def render_models(self, status):
             if status.get('checking'):
@@ -1266,6 +1369,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def page_changed(self, *_):
             name = self.stack.get_visible_child_name()
+            if hasattr(self, 'sidebar_tools'):
+                self.sidebar_tools.set_expanded(name != 'workspace')
             titles = {'workspace': 'Chats', 'history': 'Task history', 'models': 'Models & hardware', 'usage': 'Usage & limits', 'memory': 'Project memory', 'accounts': 'Accounts'}
             self.page_title.set_text('Workspace / ' + titles.get(name, 'Chats'))
             for key, button in self.navigation.items():

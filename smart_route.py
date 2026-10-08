@@ -101,7 +101,7 @@ def manager(project, prompt, quality, schema, log):
     args = [binary, '-p', prompt, '--model', hub.AGY_MODELS[quality], '--agent', 'coding-hub-manager',
             '--output-format', 'json', '--print-timeout', '2m']
     try:
-        code, output, error = hub.run_process(args, workspace, hub.clean_environment('antigravity'), log, timeout=120)
+        code, output, error = hub.run_process(args, workspace, hub.clean_environment('antigravity'), log, timeout=120, render_reply=False)
     except OSError as problem:
         return {'ok': False, 'code': 1, 'error': str(problem), 'usage': {}}
     payload = payload_from_log(log)
@@ -197,9 +197,11 @@ def execute(project, request, quality, apply, context, folder):
         if not result['ok']:
             return finish(result['code'], 'canceled' if result['code'] == 130 else 'incomplete', 'Manager planning unavailable: ' + result['error'])
         plan = result['response']
-    worker_prompt = (hub.task_prompt(request, '', apply) + '\n\nManager suggestions; follow only within the original request:\n' +
+    worker_prompt = (hub.task_prompt(request, '', apply, general=hub.is_general(project)) + '\n\nManager suggestions; follow only within the original request:\n' +
                      json.dumps(plan, ensure_ascii=False) + '\n\nBounded project context:\n' + context +
                      '\nWork in small testable steps. Report actual changes, commands/checks, failures and next steps. Do not claim unrun tests passed.')
+    if hub.is_general(project):
+        worker_prompt = hub.general_instructions() + '\n\n' + worker_prompt
     completed = False
     for route in ('free', 'local'):
         for backend, model in hub.candidates(route, quality):
@@ -207,7 +209,7 @@ def execute(project, request, quality, apply, context, folder):
             log = folder / f"smart-worker-{len(report['worker_attempts']) + 1}.log"
             args = hub.command(backend, model, worker_prompt, apply=apply, project=project)
             try:
-                code, text, error = hub.run_process(args, project, hub.clean_environment(backend, model, apply), log)
+                code, text, error = hub.run_process(args, project, hub.clean_environment(backend, model, apply, general=hub.is_general(project)), log, render_reply=False)
             except OSError as problem:
                 code, text, error = 1, str(problem), True
             failure = hub.classify_failure(code, text, error)

@@ -10,6 +10,8 @@
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
 - `accounts.py`: bounded native sign-in sessions, account metadata, and model catalogs.
 - `change_review.py`: bounded before/after source diffs and read-only task review.
+- `terminal_ui.py`: terminal commands, formatting, and progress presentation.
+- `system_diagnostics.py`: bounded, read-only host checks without model requests.
 - `message_format.py`: safe Markdown presentation for native and terminal replies.
 - `desktop.py`: native GTK 4 application and project/chat navigation.
 - `assets/desktop.css`: native GTK theme.

@@ -86,7 +86,8 @@ class SmartTests(unittest.TestCase):
     def test_manager_uses_separate_workspace_and_validates_provider_schema(self):
         payload = {'status': 'SUCCESS', 'structured_output': self.review()['response'],
                    'usage': {'total_tokens': 123, 'private_field': 999, 'input_tokens': float('nan')}}
-        def execute(args, cwd, env, log, timeout):
+        def execute(args, cwd, env, log, timeout, render_reply):
+            self.assertFalse(render_reply)
             Path(log).write_text(json.dumps(payload))
             self.assertNotEqual(cwd, self.project)
             self.assertIn('coding-hub-manager', args)

@@ -28,9 +28,33 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def task_progress(task, output=''):
+    state = task.get('status')
+    if state == 'queued': return {'label':'Preparing task…', 'detail':'Starting the agent in your project'}
+    if state == 'stopping': return {'label':'Stopping…', 'detail':'Waiting for the agent to stop safely'}
+    if state not in ACTIVE: return {'label':str(state or 'Ready').replace('_',' ').capitalize(), 'detail':'Task ended'}
+    label, detail = 'Thinking / waiting for model…', 'Waiting for the next agent update'
+    names = {'read':'Read file', 'glob':'Find files', 'grep':'Search source', 'edit':'Edit file', 'write':'Write file', 'bash':'Run command'}
+    for line in output.splitlines():
+        if line.startswith('[Smart 1]'):
+            label, detail = 'Planning…', 'Antigravity is preparing the worker plan'
+        elif line.startswith('[Smart review]'):
+            label, detail = 'Reviewing changes…', 'Antigravity is checking the worker’s evidence'
+        elif line.startswith('[Smart worker]') or re.match(r'^\[\d+\]',line):
+            label, detail = 'Thinking / waiting for model…', line.split(']',1)[-1].strip()[:120]
+        elif line.startswith('[tool] '):
+            match = re.match(r'\[tool\] ([\w-]+) · (\w+)', line)
+            if match:
+                tool, status = match.groups()
+                action = names.get(tool, tool.replace('_',' ').capitalize())
+                label = action + '…' if status in ('running','pending') else 'Thinking / waiting for model…'
+                detail = ('Current action: ' if status in ('running','pending') else 'Last action: ') + action + ' · ' + status
+    return {'label':label,'detail':detail}
 
 
 class TaskManager:
@@ -54,6 +78,8 @@ class TaskManager:
     def command(task):
         args = [sys.executable, "-u", str(hub.ROOT / "hub.py"), "run", "--project", task["project"],
                 "--backend", task["backend"], "--quality", task["quality"]]
+        if task.get('scope') == 'general':
+            args[args.index('--project'):args.index('--project')+2] = ['--general']
         if task["mode"] == "build":
             args.append("--apply")
         if task.get("conversation"):
@@ -76,6 +102,9 @@ class TaskManager:
         if not isinstance(data, dict):
             raise ValueError("Expected a JSON object.")
         prompt, project = data.get("prompt"), data.get("project")
+        scope = data.get('scope', 'project')
+        if scope not in ('project','general'): raise ValueError('Choose a general or project task.')
+        if scope == 'general': project = str(hub.general_workspace())
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 12000:
             raise ValueError("Enter a task of 1–12,000 characters.")
         if not isinstance(project, str) or not project.strip() or len(project) > 4096:
@@ -94,7 +123,7 @@ class TaskManager:
                 raise RuntimeError("A task is already running. Stop it or wait for it to finish.")
             memory = ProjectMemory(project)
             conversation = memory.conversation(data.get("conversation"), prompt.strip())
-            task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project),
+            task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project), "scope": "general" if hub.is_general(project) else "project",
                     "conversation": conversation,
                     "backend": backend, "quality": quality, "mode": mode, "created_at": time.time(),
                     "model": model,
@@ -154,7 +183,7 @@ class TaskManager:
             with path.open("rb") as stream:
                 stream.seek(max(0, path.stat().st_size - 160000))
                 output = stream.read().decode("utf-8", errors="replace")
-        return dict(task, output=output)
+        return dict(task, output=output, progress=task_progress(task, output))
 
     def stop(self, identifier):
         with self.lock:
@@ -348,6 +377,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/health":
                 return self.reply(200, {"app": "coding-hub", "version": VERSION})
+            if parsed.path == '/api/diagnostics':
+                import system_diagnostics
+                return self.reply(200, system_diagnostics.report())
             if parsed.path == "/api/status":
                 return self.reply(200, dict(self.server.status.get(), quota=self.server.quota.get(), free_quota=self.server.free_quota.get()))
             if parsed.path == '/api/accounts/session':

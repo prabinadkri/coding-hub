@@ -2,11 +2,11 @@
 <h1 align="center">Coding Hub</h1>
 <p align="center">A calm workspace for cloud coding agents and local Qwen.</p>
 
-Coding Hub brings Antigravity, verified free OpenCode models, and Ollama into one workspace with **terminal, native Linux app, and web interfaces**. Choose a project, describe a task, and follow its progress. Keep inference local when you want to, or use a cloud agent for larger work.
+Coding Hub brings Antigravity, verified free OpenCode models, and Ollama into one workspace with **terminal, native Linux app, and web interfaces**. Use a **General task** for Linux help or standalone requests, or a **Project task** for work tied to a folder. Choose a project, describe a task, and follow its progress. Keep inference local when you want to, or use a cloud agent for larger work.
 
 ![Full-width browser conversation in dark mode, with sample data](docs/web-chat-dark.png)
 
-The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, **Accounts**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar. Existing chats hide the project picker, align your messages to the right and assistant replies to the left, and keep route settings in a compact disclosure. New chats show project selection. The header’s Project memory button opens the shared instructions for the current project.
+The native Linux app uses the same workspace organization, with dedicated pages for **Chats**, **Task history**, **Models & hardware**, **Usage & limits**, **Accounts**, and **Project memory**. Provider limits are grouped into cards, token breakdowns expand when needed, and project chats remain available in the sidebar. Existing chats hide the project picker, align your messages to the right and assistant replies to the left, and keep route settings in a compact disclosure. New chats let you choose General task or Project task. The sidebar prioritizes chats, puts new conversations first, and keeps secondary pages in **Tools & settings**. The header’s Project memory button opens the shared instructions for the current project.
 
 ![Native Linux conversation with sample data](docs/desktop-chat.png)
 
@@ -36,13 +36,13 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 ### Linux app
 
 1. Open **Coding Hub** from Applications. Pin that entry to your dock if desired. Its desktop ID and icon match the running GTK window.
-2. Choose **New chat**, select an existing project folder, and describe the task. Existing chats keep their original project.
+2. Choose **New chat → General task** for questions, Linux commands, or standalone work—no folder required. Choose **Project task** or **New project** to select a project folder. Existing chats keep their original scope.
 3. Expand **Chat settings**. Select a route and then a model. Antigravity lists models available to your Google account, including any Claude/GPT options. Free cloud shows currently verified free models; Local shows installed Ollama models. Automatic and Smart select models for their stages.
 4. Leave **Allow edits & commands** off for explanations. Enable it to let the agent modify project files and run commands.
-5. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
+5. An animated indicator shows observed activity, such as planning, a tool action, waiting for the model, or review, with elapsed time. **Stop task** remains beside Send. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
 6. Replies format headings, lists, inline code, and code blocks. Replies span the reading area, with small copy/review actions beneath them and language labels on code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
 7. Toggle **Dark** in the title bar to save your appearance preference. **Project memory** opens shared requirements for the current project.
-8. **Models & hardware** shows CPU/GPU activity, RAM/VRAM, and loaded model placement. “GPU available” means the driver works; “GPU acceleration in use” means Ollama reports model data on the GPU. GPU activity includes other applications. Samples normally refresh every 3–6 seconds.
+8. Open **Tools & settings → Models & hardware** for system information. **Run system check** collects read-only diagnostics; **Discuss in general chat** prepares a message for you to send. This page also shows CPU/GPU activity, RAM/VRAM, and loaded model placement. “GPU available” means the driver works; “GPU acceleration in use” means Ollama reports model data on the GPU. GPU activity includes other applications. Samples normally refresh every 3–6 seconds.
 
 ### Browser
 
@@ -69,6 +69,10 @@ These routes use your existing plan’s limits and model eligibility. They are n
 
 ```bash
 codehub                              # Menu; option 8 starts a conversation
+codehub chat --general               # Standalone chat; no project folder
+codehub chat --general --backend local
+codehub run --general --apply "Run uname -s and df -h /, then summarize the output without changing anything"
+codehub doctor                       # Read-only system diagnostics
 codehub chat --project ~/my-project
 codehub chat --project ~/my-project --backend local --model coding-hub-qwen:8b
 codehub chat --project ~/my-project --continue
@@ -84,13 +88,30 @@ codehub login --provider openai
 
 Inside `codehub chat`:
 
-- `:models` lists choices for the current route.
-- `:model MODEL_ID` selects one; `:model default` restores that route’s default.
-- `:route local`, `:route free`, `:route antigravity`, `:route claude`, or `:route openai` changes route and clears the model choice. Automatic and Smart are also supported. Use `:models` afterward.
-- `:new` starts a conversation in the same project, `:memory` shows shared requirements, and `:quit` exits.
-- Ctrl+C cancels work. Partial edits remain available for review.
+- `/help` shows grouped commands; Tab completes command names. Arrow keys edit the current input.
+- `/paste` accepts a multiline message. Finish with a single `.` on its own line; `/cancel` discards it.
+- `/models` lists choices; `/model MODEL_ID` selects one; `/model default` restores the default.
+- `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic and Smart are supported too.
+- `/edit on` enables commands and requested changes; `/edit off` returns to analysis mode.
+- `/doctor` prints a read-only system report and includes it in your next message. `/new` clears that pending report.
+- `/changes` reviews the latest task diff; `/memory` shows shared instructions and source-index coverage; `/status` shows the current setup.
+- `/new` starts another conversation; `/quit` exits. Existing `:commands` still work.
+- Ctrl+C cancels active work and preserves partial changes. At the input prompt, Ctrl+C exits the chat.
 
-Interactive terminals show concise progress and a formatted final answer. Raw provider/tool details remain in the private task log. Redirected output stays plain text for scripts and the dashboard. `codehub open --backend local --project ~/my-project` opens the underlying agent’s full terminal interface.
+Interactive terminals show an animated progress line, readable replies, and labeled code blocks. Smart's internal planning/review JSON stays out of the final terminal conversation. Raw tool details remain in private logs. Redirected output stays plain text for scripts and the dashboard. `codehub open --backend local --project ~/my-project` opens the underlying agent’s full terminal interface.
+
+### General tasks and Linux help
+
+Use **New chat → General task** in the app/browser, or `codehub chat --general`. These chats are saved under **General chats**, separately from project conversations. Ask questions in analysis mode; enable **Allow commands & changes** (CLI: `/edit on` or `--apply`) when you want the agent to execute a task. For example: “Run `df -h /` and explain the disk usage without changing anything.”
+
+**System check** runs a fixed set of read-only checks for disks, memory, CPU load, NVIDIA, time synchronization, failed services, and Secure Boot. It makes no model request and changes no settings. **Discuss in general chat** lets you review the report before sending it to your chosen model. Missing commands are shown as unavailable, not treated as evidence of a fault.
+
+General tasks run with your normal user permissions. Administrator actions require you to run the proposed command yourself; the hub never collects a sudo password. Agents are asked to inspect first and perform only requested changes. Command mode is not an operating-system sandbox. Prefer focused requests and review the output.
+
+Each general task starts in a private scratch folder at `~/.local/state/coding-hub/workspaces/general`; name an absolute destination when you want files somewhere else. Its chat history and memory persist across interfaces. Change review captures files inside that scratch folder only; system changes or files elsewhere must be verified through command output and direct inspection.
+
+![Native general task in light mode, using synthetic data](docs/desktop-general-light.png)
+
 
 ## Install
 

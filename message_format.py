@@ -3,9 +3,8 @@ from __future__ import annotations
 import html
 import os
 import re
-import shutil
-import sys
 import textwrap
+from terminal_ui import safe_text, width as terminal_width, style, interactive
 
 
 def clean_reply(text):
@@ -62,14 +61,17 @@ def inline_markup(text):
 
 
 def terminal_reply(text):
-    color = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
-    width = max(40, min(100, shutil.get_terminal_size((88, 24)).columns - 4))
+    color = interactive() and 'NO_COLOR' not in os.environ
+    width = terminal_width()
     heading = '\x1b[1;38;5;150m' if color else ''
     reset = '\x1b[0m' if color else ''
     print('\n' + heading + 'Coding Hub' + reset + '\n')
-    for kind, content in blocks(text):
+    for kind, content in blocks(safe_text(text), with_languages=True):
         if kind == 'code':
+            language, content = content
+            print(style('  ┌─ ' + (language or 'code'), '2'))
             print('\n'.join('    '+line for line in content.splitlines()))
+            print(style('  └' + '─' * min(width - 3, 40), '2'))
         else:
             plain = re.sub(r'\*\*([^*]+)\*\*|`([^`]+)`', lambda m: m.group(1) or m.group(2), content)
             if kind == 'heading':

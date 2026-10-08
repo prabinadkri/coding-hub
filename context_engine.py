@@ -71,7 +71,7 @@ class ProjectMemory:
         self.directory = hub.private_dir(hub.STATE / 'projects' / key)
         metadata = self.directory / 'project.json'
         if not metadata.exists():
-            hub.save_json(metadata, {'project': str(self.project), 'name': self.project.name})
+            hub.save_json(metadata, {'project': str(self.project), 'name': 'General chats' if hub.is_general(self.project) else self.project.name, 'scope': 'general' if hub.is_general(self.project) else 'project'})
         self.database = self.directory / 'index.sqlite3'
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
@@ -228,7 +228,7 @@ class ProjectMemory:
     def conversation(self, identifier=None, goal='', resume=False):
         with self.connect() as db:
             if resume and not identifier:
-                row = db.execute('SELECT id FROM conversations ORDER BY updated DESC LIMIT 1').fetchone()
+                row = db.execute('SELECT id FROM conversations ORDER BY rowid DESC LIMIT 1').fetchone()
                 if not row:
                     raise ValueError('This project has no conversation to continue.')
                 identifier = row['id']
@@ -241,6 +241,9 @@ class ProjectMemory:
             else:
                 identifier = uuid.uuid4().hex
                 db.execute('INSERT INTO conversations VALUES(?,?,?,?)', (identifier, goal, time.time(), time.time()))
+                metadata = json.loads((self.directory / 'project.json').read_text())
+                metadata['last_activity'] = time.time()
+                hub.save_json(self.directory / 'project.json', metadata)
         return identifier
 
     def record(self, conversation, task, request, result, status):
@@ -333,7 +336,7 @@ class ProjectMemory:
                     except OSError:
                         continue
             turns.append(turn)
-        return dict(conversation, project=str(self.project), turns=turns, total_turns=total,
+        return dict(conversation, scope='general' if hub.is_general(self.project) else 'project', project=str(self.project), turns=turns, total_turns=total,
                     oldest_cursor=oldest, has_older=has_older)
 
 
@@ -344,8 +347,8 @@ def project_tree():
             value = json.loads(metadata.read_text())
             memory = ProjectMemory(value['project'])
             with memory.connect() as db:
-                conversations = [dict(r) for r in db.execute('SELECT id,goal,updated FROM conversations ORDER BY updated DESC LIMIT 100')]
+                conversations = [dict(r) for r in db.execute('SELECT id,goal,updated FROM conversations ORDER BY rowid DESC LIMIT 100')]
             projects.append(dict(value, conversations=conversations))
         except (OSError, ValueError, sqlite3.Error):
             continue
-    return sorted(projects, key=lambda p: p['name'].lower())
+    return sorted(projects, key=lambda p: (bool(p.get('last_activity')), p.get('last_activity', 0), max((c['updated'] for c in p['conversations']), default=0)), reverse=True)

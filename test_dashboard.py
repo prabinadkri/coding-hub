@@ -76,6 +76,35 @@ class DashboardTests(unittest.TestCase):
         for endpoint in ('/api/projects', '/api/project', '/api/conversation', '/api/changes'):
             self.assertEqual(self.request(endpoint, token='')[0], 401)
 
+    def test_progress_uses_observed_stages_and_keeps_completed_tools_in_the_past(self):
+        task = {'status':'running'}
+        self.assertIn('Thinking', dashboard.task_progress(task)['label'])
+        self.assertEqual(dashboard.task_progress(task, '[Smart 1] Antigravity manager · concise plan')['label'], 'Planning…')
+        writing = dashboard.task_progress(task, '[tool] write · running')
+        self.assertEqual(writing['label'], 'Write file…')
+        completed = dashboard.task_progress(task, '[tool] write · completed')
+        self.assertIn('Last action', completed['detail'])
+        self.assertIn('Thinking', completed['label'])
+        reviewing = dashboard.task_progress(task, '[tool] write · completed\n[Smart review] Antigravity manager · bounded evidence review')
+        self.assertEqual(reviewing['label'], 'Reviewing changes…')
+        self.assertEqual(dashboard.task_progress({'status':'stopping'})['label'], 'Stopping…')
+
+    def test_general_task_needs_no_project_and_cannot_mix_project_chats(self):
+        code, task = self.request('/api/tasks', {'scope':'general','prompt':'Explain Linux memory'})
+        self.assertEqual(code, 201)
+        self.assertEqual(task['scope'],'general')
+        self.assertEqual(Path(task['project']), hub.general_workspace().resolve())
+        self.wait_task(task['id'])
+        self.assertIn('--general',self.manager.command(task))
+        self.assertNotIn('--project',self.manager.command(task))
+        code, data = self.request('/api/conversation?project='+task['project']+'&id='+task['conversation'])
+        self.assertEqual(data['scope'],'general')
+        code, _ = self.request('/api/tasks', {'project':str(self.project),'conversation':task['conversation'],'prompt':'Cross project'})
+        self.assertEqual(code,400)
+        tree=self.request('/api/projects')[1]['projects']
+        self.assertEqual(tree[0]['name'],'General chats')
+        self.assertEqual(self.request('/api/diagnostics',token='')[0],401)
+
     def test_account_endpoints_require_token_and_reject_arbitrary_provider(self):
         for endpoint in ('/api/accounts/start', '/api/accounts/input', '/api/accounts/close'):
             self.assertEqual(self.request(endpoint, {}, token='')[0], 401)

@@ -116,3 +116,16 @@ window.dark { background: #151d1a; color: #e1e9e3; }
 .dark .reply-code-heading { background: #293d2c; }
 .prompt-placeholder { color: #879381; font-size: 13px; }
 .dark .prompt-placeholder { color: #99aa99; }
+
+/* Explicit light surfaces remain readable when the system itself uses a dark theme. */
+window:not(.dark) dropdown button, window:not(.dark) dropdown popover contents { background: #ffffff; color: #2a4032; }
+window:not(.dark) checkbutton check { background: #ffffff; border: 1px solid #8d9f89; color: #ffffff; }
+window:not(.dark) checkbutton check:checked { background: #315940; border-color: #315940; }
+window:not(.dark) entry selection, window:not(.dark) textview text selection { background: #d4e6ca; color: #223e29; }
+.sidebar .new-project { padding: 6px 12px; font-size: 11px; }
+.sidebar .project-new-chat { padding: 5px 10px; font-size: 11px; color: #a4b99b; }
+.sidebar expander > title { padding: 7px 4px; }
+.pending-message { padding: 18px 8px 24px; }
+.pending-title { color: #42643a; font-size: 13px; font-weight: 600; }
+.dark .pending-title { color: #b2cba3; }
+.pending-message spinner { color: #7d9d67; }

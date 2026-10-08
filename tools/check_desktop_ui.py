@@ -48,6 +48,7 @@ def main():
                     'turns': [{'rowid': 1, 'task': 'preview-task', 'has_review': True, 'request': task['prompt'], 'result': '## Changes\n- Clear navigation and grouped metrics.\n- Compact replies with **persistent memory**.\n\n## Checks\nLayout checks passed.\n\n```python\nprint("Ready to build")\n```', 'status': 'completed'}]}
     sample_conversation = json.loads(json.dumps(conversation))
     requests = []
+    posted_tasks = []
 
     def api(path, body=None):
         requests.append((path, body))
@@ -55,13 +56,21 @@ def main():
         if path.startswith('accounts/session'): return {'id':'preview-signin','running':True,'screen':'Choose Google OAuth to continue','links':[]}
         if path in ('accounts/input','accounts/close'): return {'ok':True}
         if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
+        if path == 'diagnostics': return {'text':'[OK] System disk\n20 GB free\n[OK] NVIDIA GPU\nGTX 1650'}
         if path == 'status': return status
         if path == 'tasks':
-            if body: return dict(task, id='preview-send', prompt=body['prompt'], status='running')
-            return {'tasks': [task]}
-        if path.startswith('tasks/'): return task
+            if body:
+                value = dict(task, id='preview-send', conversation=body.get('conversation') or 'preview-empty-chat', scope=body.get('scope','project'), project=str(hub.general_workspace()) if body.get('scope')=='general' else body['project'], prompt=body['prompt'], status='running', created_at=time.time(), started_at=time.time(), ended_at=None)
+                posted_tasks[:] = [value]
+                return value
+            return {'tasks': posted_tasks + [task]}
+        if path.startswith('tasks/'): return next((t for t in posted_tasks if path.endswith(t['id'])),task)
         if path == 'projects': return {'projects': [{'name': 'studio', 'project': project, 'conversations': [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
-        if path.startswith('conversation?'): return conversation
+        if path.startswith('conversation?'):
+            if 'preview-empty-chat' in path:
+                current = posted_tasks[0] if posted_tasks else {'project':project,'prompt':'Create a page'}
+                return {'id':'preview-empty-chat','scope':current.get('scope','project'),'project':current['project'],'goal':current['prompt'],'turns':[],'total_turns':0}
+            return conversation
         if path == 'project/notes': return {'saved': True}
         if path.startswith('project?'): return {'requirements': 'Preserve public APIs. Run the relevant tests.', 'indexed_files': 428, 'eligible_files': 428, 'turns': 3, 'guidance_files': [{'name': 'CODING_HUB.md'}]}
         if path == 'quota/refresh': return status['quota']
@@ -75,6 +84,20 @@ def main():
                 GLib.MainContext.default().iteration(False)
             time.sleep(.01)
 
+    def capture(window, name):
+        # A widget can have no render node while GTK replaces its current frame.
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            paintable = Gtk.WidgetPaintable.new(window)
+            snapshot = Gtk.Snapshot()
+            paintable.snapshot(snapshot, window.get_width(), window.get_height())
+            node = snapshot.to_node()
+            if node is not None:
+                window.get_renderer().render_texture(node, None).save_to_png(str(args.output/name))
+                return
+            settle(.1)
+        raise AssertionError('Empty native render: ' + name)
+
     with tempfile.TemporaryDirectory(prefix='coding-hub-ui-') as temporary:
         old_state = hub.STATE
         hub.STATE = Path(temporary)
@@ -84,11 +107,15 @@ def main():
             finished(True, None)
         app = desktop.create_application(Gtk, Gdk, Gio, GLib, api, 'http://127.0.0.1:8765/', browser_launcher=browser_launcher)
         try:
+            Gtk.Settings.get_default().set_property('gtk-theme-name', 'Adwaita-dark')
             app.register(None)
             app.activate()
             settle(.7)
+            app.scope.set_selected(1)
             app.project.set_text(project)
             assert not app.error.get_visible(), app.error.get_text()
+            assert Gtk.Settings.get_default().get_property('gtk-theme-name') == 'Adwaita'
+            assert not app.sidebar_tools.get_expanded()
             assert app.connection.get_text() == '●  Connected locally'
             assert not app.release_button.get_sensitive()
             app.open_web_button.emit('clicked')
@@ -102,13 +129,7 @@ def main():
                     settle()
                     assert app.navigation[page].has_css_class('selected')
                     assert app.window.get_width() <= width, (page, width, app.window.get_width())
-                    paintable = Gtk.WidgetPaintable.new(app.window)
-                    snapshot = Gtk.Snapshot()
-                    paintable.snapshot(snapshot, app.window.get_width(), app.window.get_height())
-                    node = snapshot.to_node()
-                    assert node is not None, 'Empty native render'
-                    texture = app.window.get_renderer().render_texture(node, None)
-                    texture.save_to_png(str(args.output / f'desktop-{page}-{width}.png'))
+                    capture(app.window, f'desktop-{page}-{width}.png')
             app.open_chat(project, 'preview-chat')
             settle()
             assert app.conversation == 'preview-chat'
@@ -134,19 +155,11 @@ def main():
                 assert actions.get_first_child().get_height() < 30, 'Reply actions should remain subtle'
                 assert not app.composer_heading.get_visible()
                 assert app.prompt_placeholder.get_visible()
-                paintable = Gtk.WidgetPaintable.new(app.window)
-                snapshot = Gtk.Snapshot()
-                paintable.snapshot(snapshot, app.window.get_width(), app.window.get_height())
-                texture = app.window.get_renderer().render_texture(snapshot.to_node(), None)
-                texture.save_to_png(str(args.output / f'desktop-chat-{width}.png'))
+                capture(app.window, f'desktop-chat-{width}.png')
             app.open_changes('preview-task')
             settle()
             assert app.review_window.get_visible()
-            paintable = Gtk.WidgetPaintable.new(app.review_window)
-            snapshot = Gtk.Snapshot()
-            paintable.snapshot(snapshot, app.review_window.get_width(), app.review_window.get_height())
-            texture = app.review_window.get_renderer().render_texture(snapshot.to_node(), None)
-            texture.save_to_png(str(args.output / 'desktop-changes.png'))
+            capture(app.review_window, 'desktop-changes.png')
             app.review_window.close()
             app.window.present()
             settle()
@@ -170,6 +183,9 @@ def main():
             assert saved['project'] == project, 'Memory must save to the project shown in the editor'
             app.new_task()
             assert app.project.get_editable() and not app.conversation
+            assert not app.project_card.get_visible()
+            assert app.scope.get_selected() == 0
+            app.scope.set_selected(1)
             assert app.project_card.get_visible()
             assert app.chat_settings.get_expanded()
             app.project.set_text(project)
@@ -215,6 +231,7 @@ def main():
             assert handled, 'Ctrl+Enter must be intercepted before TextView consumes it'
             assert len([p for p,b in requests if p=='tasks' and b]) == sent_before+1
             assert not app.prompt.get_buffer().get_char_count()
+            posted_tasks.clear()
             app.theme_switch.set_active(True)
             assert json.loads(app.preferences_path.read_text())['dark'] is True
             assert app.window.has_css_class('dark')
@@ -229,11 +246,7 @@ def main():
             for page in ('workspace','models','accounts'):
                 app.stack.set_visible_child_name(page)
                 settle()
-                paintable = Gtk.WidgetPaintable.new(app.window)
-                snap = Gtk.Snapshot()
-                paintable.snapshot(snap, app.window.get_width(), app.window.get_height())
-                texture = app.window.get_renderer().render_texture(snap.to_node(), None)
-                texture.save_to_png(str(args.output / f'desktop-dark-{page}.png'))
+                capture(app.window, f'desktop-dark-{page}.png')
             app.route.set_selected(1)
             app.start_signin('antigravity')
             settle()
@@ -246,7 +259,72 @@ def main():
             app.close_signin()
             settle()
             assert not app.signin_panel.get_visible()
-            print(json.dumps({'rendered': 18, 'native_workflows': 'passed', 'provider_requests': 0}))
+            # Regression: switch from an archived conversation to a truly empty project.
+            app.theme_switch.set_active(False)
+            app.open_chat(project, 'preview-chat')
+            settle()
+            assert app.message_archive
+            app.new_task()
+            assert not app.message_archive and app.archive_conversation is None
+            assert not app.sidebar_tools.get_expanded()
+            empty = Path(temporary) / 'empty-project'
+            empty.mkdir()
+            app.scope.set_selected(1)
+            app.project.set_text(str(empty))
+            app.prompt.get_buffer().set_text('Create a simple page in this empty project')
+            app.run_task()
+            settle(.7)
+            assert app.conversation == 'preview-empty-chat'
+            assert not app.error.get_visible(), app.error.get_text()
+            assert app.pending_indicator and app.pending_indicator[1].get_text().startswith('Thinking')
+            assert not app.message_archive
+            assert app.form()['project'] == str(empty)
+            assert not list(empty.iterdir()), 'The UI fixture must not generate source files'
+            # A stale total with an empty page must not index an empty list.
+            app.message_signature = None
+            app.render_messages({'id':'preview-empty-chat','goal':'Create a page','turns':[],'total_turns':8})
+            detail = dict(posted_tasks[0], progress={'label':'Writing a file…','detail':'Current action: Write file · running'})
+            app.tasks = [detail]
+            app.render_messages({'id':'preview-empty-chat','goal':'Create a page','turns':[],'total_turns':8})
+            assert app.pending_indicator[1].get_text() == 'Writing a file…'
+            app.render_tree([{'name':'empty-project','project':str(empty),'conversations':[{'id':'preview-empty-chat','goal':'Create a page'}]}])
+            group = app.project_tree.get_first_child()
+            assert group.get_child().get_first_child().get_label() == '+ New chat'
+            settle()
+            capture(app.window, 'desktop-working-light.png')
+            assert app.sidebar_tree_scroll.get_height() > 350, 'Project chats must dominate the sidebar'
+            app.tasks = [dict(detail,status='completed')]
+            app.render_messages({'id':'preview-empty-chat','goal':'Create a page','turns':[],'total_turns':0})
+            assert app.pending_indicator is None, 'Completed tasks must remove the running indicator'
+            posted_tasks.clear()
+            app.new_task()
+            assert app.output_details.get_label() == 'Task activity'
+            app.scope.set_selected(1)
+            app.project.set_text(str(empty))
+            settle()
+            capture(app.window, 'desktop-new-chat-light.png')
+            app.new_task()
+            assert app.form()['scope'] == 'general'
+            assert not app.project_card.get_visible()
+            app.prompt.get_buffer().set_text('Explain my Linux memory usage')
+            app.run_task()
+            settle(.7)
+            assert app.scope.get_selected() == 0
+            assert app.chat_subtitle.get_text().startswith('General task')
+            assert posted_tasks[0]['scope'] == 'general'
+            assert not app.error.get_visible(), app.error.get_text()
+            posted_tasks.clear()
+            app.new_task()
+            settle()
+            capture(app.window,'desktop-general-light.png')
+            app.stack.set_visible_child_name('models')
+            app.diagnose_system()
+            settle(.7)
+            assert 'GTX 1650' in app.doctor_report.get_text()
+            app.discuss_diagnostics()
+            assert app.form()['scope'] == 'general' and not app.edits.get_active()
+            assert 'GTX 1650' in app.form()['prompt']
+            print(json.dumps({'rendered': 21, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()
