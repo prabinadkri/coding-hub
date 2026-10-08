@@ -11,6 +11,9 @@ import time
 
 def owner_alive(pid):
     if not isinstance(pid,int) or isinstance(pid,bool) or pid <= 0: return False
+    # Windows does not support the POSIX signal-zero liveness probe. Keep old
+    # owners protected there; modern OS locks still release automatically.
+    if os.name == 'nt': return True
     try: os.kill(pid,0)
     except ProcessLookupError: return False
     except PermissionError: return True
