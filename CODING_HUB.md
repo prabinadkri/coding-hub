@@ -6,6 +6,7 @@
 - `dashboard.py`: authenticated loopback HTTP API and task lifecycle.
 - `context_engine.py`: SQLite source retrieval, project rules, conversation checkpoints.
 - `smart_route.py`: bounded manager/worker orchestration and provider-reported token metrics.
+- `free_quota.py`: read-only OpenCode usage metadata, rate-limit observations, and expected UTC reset timing.
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
 - `desktop.py`: native GTK 4 application and project/chat navigation.
 - `assets/`: browser interface, with no build step or third-party scripts.

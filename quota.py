@@ -60,12 +60,12 @@ class QuotaCache:
 
     def get(self, force=False):
         with self.lock:
-            if not self.refreshing and (force or time.time() - self.attempted_at > 300):
+            if not self.refreshing and (force or time.monotonic() - self.attempted_at > 300):
                 self.refreshing = True
-                self.attempted_at = time.time()
+                self.attempted_at = time.monotonic()
                 threading.Thread(target=self.update, daemon=True).start()
             return dict(self.value, refreshing=self.refreshing,
-                        stale=bool(self.value.get('error')) or not self.value.get('checked_at') or time.time() - self.value['checked_at'] > 360)
+                        stale=bool(self.value.get('error')) or not self.value.get('checked_at') or not 0 <= time.time() - self.value['checked_at'] <= 360)
 
     def update(self):
         try:

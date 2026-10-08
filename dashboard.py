@@ -24,9 +24,10 @@ import webbrowser
 
 import hub
 import quota
+import free_quota
 from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -204,7 +205,7 @@ class StatusCache:
 
     def get(self, force=False):
         with self.lock:
-            if not self.updating and (force or time.time() - self.updated > 20):
+            if not self.updating and (force or time.monotonic() - self.updated > 20):
                 self.updating = True
                 threading.Thread(target=self.refresh, daemon=True).start()
             return dict(self.value, refreshing=self.updating)
@@ -224,7 +225,7 @@ class StatusCache:
                 gpu = pool.submit(self.gpu)
                 value.update(models=tags.result(), loaded=loaded.result(), gpu=gpu.result(), ram=self.ram())
             # Dashboard prices may be cached; executing a free route always verifies afresh.
-            if not value.get("pricing_checked_at") or time.time() - value["pricing_checked_at"] > 300:
+            if not value.get("pricing_checked_at") or not 0 <= time.time() - value["pricing_checked_at"] <= 300:
                 try:
                     value["free_models"] = hub.refresh_free_models()
                     value["pricing_checked_at"] = time.time()
@@ -233,7 +234,7 @@ class StatusCache:
                     value["pricing_error"] = True
             value.update(checking=False, local_ready=hub.LOCAL_AGENT_MODEL in value["models"], local_model=hub.LOCAL_AGENT_MODEL)
             with self.lock:
-                self.value, self.updated = value, time.time()
+                self.value, self.updated = value, time.monotonic()
         finally:
             with self.lock:
                 self.updating = False
@@ -253,6 +254,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.manager = manager or TaskManager()
         self.status = status or StatusCache()
         self.quota = quota.QuotaCache()
+        self.free_quota = free_quota.FreeQuotaCache()
         self.token = token or secrets.token_urlsafe(32)
         super().__init__(address, Handler)
 
@@ -302,7 +304,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/health":
                 return self.reply(200, {"app": "coding-hub", "version": VERSION})
             if parsed.path == "/api/status":
-                return self.reply(200, dict(self.server.status.get(), quota=self.server.quota.get()))
+                return self.reply(200, dict(self.server.status.get(), quota=self.server.quota.get(), free_quota=self.server.free_quota.get()))
             if parsed.path == "/api/project":
                 project = parse_qs(parsed.query).get("path", [""])[0]
                 if not project:
@@ -358,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, self.server.status.get(True))
             if self.path == "/api/quota/refresh":
                 return self.reply(200, self.server.quota.get(True))
+            if self.path == "/api/free-quota/refresh":
+                return self.reply(200, self.server.free_quota.get(True))
             if self.path == "/api/project/notes":
                 project = data.get("project")
                 if not isinstance(project, str) or not project.strip():

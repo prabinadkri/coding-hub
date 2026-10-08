@@ -10,7 +10,7 @@ Coding Hub brings Antigravity, verified free OpenCode models, and Ollama into on
 
 - Project → chat navigation in the native app and browser, with saved messages, follow-up replies, earlier-message loading, live output, cancellation, and draft recovery.
 - Persistent project instructions, pinned requirements, searchable conversation checkpoints, and a local source index for focused context.
-- Live Antigravity quota percentages and reset countdowns, read through its official `/usage` command.
+- A Usage & limits page: live Antigravity quotas, free-model local usage and observed retry times, expected daily reset countdowns, and local Qwen status.
 - Opt-in Smart routing: Antigravity makes a short plan and reviews evidence; verified free models or local Qwen perform the work, with measured manager token usage and at most two manager calls.
 - Automatic fallback: Antigravity → currently verified free OpenCode models → local Qwen3 8B. A handoff preserves the original task and partial changes.
 - NVIDIA status, actual model offload, memory usage, and a button to release the local model from memory.
@@ -142,10 +142,29 @@ A synthetic validation indexed 10,000 small source files in about 4.7 seconds on
 The browser quota card and the native app's **Usage** tab show remaining percentages, provider reset times, countdowns, and the last successful check. You can refresh manually or use:
 
 ```bash
-codehub quota
+codehub quota                      # All providers
+codehub quota --provider antigravity
+codehub quota --provider free      # Local read only; no model requests
+codehub quota --provider local
 ```
 
 The hub invokes `agy -p /usage --output-format json`. This is Antigravity's own slash command, which returned structured quota groups with zero model turns in validation. It does not extract tokens or call private account APIs. Background checks are limited to once every five minutes. Failed refreshes retain the last known snapshot with a stale/error label; missing reset times stay unknown. Percentages apply to the provider's shared model groups. See [official quota documentation](https://www.antigravity.google/docs/cli/commands/usage).
+
+## Free-model usage and reset times
+
+![Coding Hub usage and limits](docs/usage.jpg)
+
+Open **Usage & limits** in the browser sidebar or **Usage** in the native app. Space Bunny, LongCat 2.5 Preview, and Big Pickle each show today's locally observed AI responses and tokens, with input, output, reasoning, and cache details. The same data is available with `codehub quota --provider free`.
+
+**Remaining allowance is shown as “Not reported.”** The current free-model integration has no public remaining-quota endpoint. Counts read from OpenCode's local database are not the provider's request counter: retries, traffic from other devices, and shared public-IP usage may be missing. A free model is not an unlimited model.
+
+The [published OpenCode free limiter](https://github.com/anomalyco/opencode/blob/5d9cd9b259f0456522f318a7435501d03cfbee79/packages/console/app/src/routes/zen/util/ipRateLimiter.ts) uses UTC-day buckets and can share limits across models on the same public IP. The hub shows an **expected** daily reset at 00:00 UTC (05:45 in Nepal), converted to your device's time zone. This is source-based timing, not a live guarantee or a promise of restored availability; production rules can change. No undocumented “200 requests” allowance is assumed.
+
+When OpenCode records an HTTP 429 error with `Retry-After`, the model card displays that provider-reported retry time and the observation time. Expired retry windows say access has not been rechecked. A later successful response clears the old limit observation. An error without a retry time stays unknown. These observations do not trigger quota probes, network changes, or bypasses.
+
+Usage refreshes read the local SQLite database in read-only mode, at most once every 20 seconds automatically, with a manual refresh button. No prompts or account tokens are sent anywhere. Queries retrieve model usage/error metadata, not conversation text or source content. Raw error bodies and headers are never returned to the interface. Missing, busy, or unsupported databases show unavailable usage rather than zero. Daily counts use recorded UTC dates; records ahead of the current clock are labeled. Refresh timers tolerate system-clock corrections. Local Qwen shows no provider quota or reset requirement; hardware and context limits still apply.
+
+The default database is `$XDG_DATA_HOME/opencode/opencode.db`, or `~/.local/share/opencode/opencode.db`. For a custom OpenCode installation, set `CODING_HUB_OPENCODE_DB` to its database path. See the [official OpenCode CLI usage commands](https://opencode.ai/docs/cli/#stats).
 
 ## Performance and limits
 
@@ -172,6 +191,6 @@ python3 -m unittest discover -p 'test_*.py' -v
 python3 hub.py web
 ```
 
-The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS.
+The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS.
 
 Licensed under [MIT](LICENSE).

@@ -559,8 +559,9 @@ def main():
     sub = parser.add_subparsers(dest="action")
     sub.add_parser("status")
     sub.add_parser("setup")
-    quota_parser = sub.add_parser("quota", help="Show live Antigravity quota and reset times")
-    quota_parser.add_argument("--refresh", action="store_true", help="Always requests fresh official usage data")
+    quota_parser = sub.add_parser("quota", help="Show provider quotas, local free-model usage, and reset information")
+    quota_parser.add_argument("--refresh", action="store_true", help="Read fresh data for the selected providers (also the default)")
+    quota_parser.add_argument("--provider", choices=("all", "antigravity", "free", "local"), default="all")
     index = sub.add_parser("index", help="Build or update the local project search index")
     index.add_argument("--project", default=os.getcwd())
     index.add_argument("--seconds", type=int, default=120)
@@ -591,7 +592,17 @@ def main():
     args = parser.parse_args()
     if args.action == "quota":
         import quota
-        print(json.dumps(quota.refresh(), indent=2))
+        import free_quota
+        result = {}
+        if args.provider in ("all", "antigravity"):
+            try:
+                result['antigravity'] = quota.refresh()
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                result['antigravity'] = {'available': False, 'error': str(error)}
+        if args.provider in ("all", "free", "local"):
+            free = free_quota.snapshot()
+            result['local' if args.provider == 'local' else 'free'] = free['local'] if args.provider == 'local' else free
+        print(json.dumps(result, indent=2))
         return 0
     if args.action in ("index", "memory", "init"):
         from context_engine import ProjectMemory

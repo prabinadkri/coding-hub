@@ -70,6 +70,7 @@ class DashboardTests(unittest.TestCase):
     def test_unauthenticated_requests_cannot_read_history_or_start_tasks(self):
         self.assertEqual(self.request("/api/tasks", token="")[0], 401)
         self.assertEqual(self.request("/api/tasks", {"project": str(self.project), "prompt": "hello"}, token="wrong")[0], 401)
+        self.assertEqual(self.request('/api/free-quota/refresh', {}, token='')[0], 401)
         self.assertEqual(self.manager.list(), [])
         for endpoint in ('/api/projects', '/api/project', '/api/conversation'):
             self.assertEqual(self.request(endpoint, token='')[0], 401)

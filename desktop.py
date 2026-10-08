@@ -436,6 +436,7 @@ def launch(port=8765):
             status, self.tasks, detail, tree, messages = result
             self.render_tree(tree)
             self.render_quota(status.get('quota', {}))
+            self.render_free_quota(status.get('free_quota', {}))
             if messages:
                 self.render_messages(messages)
             if not status.get("checking"):
@@ -613,6 +614,17 @@ def launch(port=8765):
 
         def build_quota_page(self):
             box = self.page_box('Usage', 'usage')
+            box.append(self.label('OpenCode free models', 'chat-title'))
+            self.free_quota_intro = self.label('Reading local usage…', 'muted')
+            self.free_quota_intro.set_wrap(True)
+            box.append(self.free_quota_intro)
+            self.free_quota_cards = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            box.append(self.free_quota_cards)
+            self.free_quota_checked = self.label('', 'muted')
+            self.free_quota_checked.set_wrap(True)
+            box.append(self.free_quota_checked)
+            box.append(self.button('Refresh free-model usage', lambda *_: self.background(lambda: api('free-quota/refresh', {}), self.render_free_quota)))
+            box.append(self.label('Antigravity', 'chat-title'))
             note = self.label('Live Antigravity limits from its official /usage command. Groups share the displayed allowance.', 'muted')
             note.set_wrap(True)
             box.append(note)
@@ -623,6 +635,60 @@ def launch(port=8765):
             box.append(self.quota_checked)
             box.append(self.button('Refresh quota', lambda *_: self.background(lambda: api('quota/refresh', {}), self.render_quota), 'primary'))
             box.append(self.label('AI credit overages are disabled by setup. Free provider quotas can change.', 'muted'))
+
+        def render_free_quota(self, data):
+            self.clear_box(self.free_quota_cards)
+            text = 'Remaining allowance is not reported here. ' + data.get('coverage', 'Reading local OpenCode data…')
+            if data.get('expected_reset_at'):
+                seconds = max(0, int(data['expected_reset_at'] - time.time()))
+                text += '\nExpected daily reset: ' + datetime.fromtimestamp(data['expected_reset_at']).strftime('%d %b, %H:%M')
+                text += f' · {seconds // 3600}h {seconds % 3600 // 60}m (00:00 UTC). Based on published limiter code, not a live guarantee.'
+            self.free_quota_intro.set_text(text)
+            states = {'not_reported': 'Allowance unknown', 'rate_limited': 'Rate limit reported',
+                      'limit_observed': 'Limit observed', 'retry_elapsed': 'Retry window passed; access not rechecked'}
+            for model in data.get('models', []):
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+                card.add_css_class('card')
+                card.append(self.label(model['name'], 'chat-title'))
+                line = self.label(states.get(model['status'], 'Unknown'), 'muted')
+                line.set_wrap(True)
+                card.append(line)
+                card.append(self.label('Remaining: not reported', 'muted'))
+                usage = model.get('usage')
+                if usage:
+                    tokens = f"{usage['total_tokens']:,}" if usage.get('total_tokens') is not None else 'unavailable'
+                    card.append(self.label(f"Today: {usage['responses']:,} AI responses · {tokens} observed tokens", 'muted'))
+                    counts = usage['tokens']
+                    detail = self.label(f"Input {counts['input']:,} · Output {counts['output']:,} · Reasoning {counts['reasoning']:,}\nCache read/write {counts['cache_read']:,} / {counts['cache_write']:,}", 'muted')
+                    detail.set_wrap(True)
+                    card.append(detail)
+                else:
+                    card.append(self.label('Local usage unavailable', 'muted'))
+                observation = model.get('observation')
+                if observation:
+                    retry = observation.get('retry_at')
+                    label = 'Provider retry time: ' + datetime.fromtimestamp(retry).strftime('%d %b, %H:%M:%S') if retry else 'Provider retry time not reported.'
+                    label += '\nObserved ' + datetime.fromtimestamp(observation['observed_at']).strftime('%d %b, %H:%M:%S')
+                    line = self.label(label, 'muted')
+                    line.set_wrap(True)
+                    card.append(line)
+                self.free_quota_cards.append(card)
+            local = self.label('Local Qwen: no provider quota and no reset required. Hardware and context limits still apply.', 'muted')
+            local.set_wrap(True)
+            self.free_quota_cards.append(local)
+            usage = data.get('local', {}).get('usage')
+            if usage:
+                tokens = f"{usage['total_tokens']:,}" if usage.get('total_tokens') is not None else 'unavailable'
+                self.free_quota_cards.append(self.label(f"Today: {usage['responses']:,} AI responses · {tokens} observed tokens", 'muted'))
+            checked = data.get('checked_at')
+            text = 'Local data checked ' + datetime.fromtimestamp(checked).strftime('%H:%M:%S') if checked else 'Checking local usage…'
+            if data.get('refreshing'):
+                text += ' · Refreshing…'
+            if data.get('error'):
+                text += '\n' + data['error']
+            if data.get('clock_warning'):
+                text += '\n' + data['clock_warning']
+            self.free_quota_checked.set_text(text)
 
         def render_quota(self, data):
             self.clear_box(self.quota_cards)

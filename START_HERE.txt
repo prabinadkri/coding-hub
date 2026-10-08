@@ -36,3 +36,9 @@ SMART ROUTE
 Choose Smart in the app/browser or use codehub chat --backend smart --project ~/my-project --apply.
 Antigravity plans/reviews; free/local workers implement. Maximum two manager calls per task.
 Reported token usage is shown in the result. Lower usage and equal quality are not guaranteed.
+
+USAGE & LIMITS
+Open Usage & limits in the browser or Usage in the app.
+CLI: codehub quota --provider free
+Free-model remaining allowance is not reported. Local usage is not the provider quota.
+Expected daily reset: 00:00 UTC (05:45 Nepal); provider Retry-After takes precedence.
