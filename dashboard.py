@@ -1,0 +1,404 @@
+"""A dependency-free, loopback-only desktop dashboard for Coding Hub."""
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import hmac
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import mimetypes
+import os
+from pathlib import Path
+import re
+import secrets
+import signal
+import subprocess
+import sys
+import threading
+import time
+from urllib.parse import parse_qs, urlsplit
+import urllib.request
+import uuid
+import webbrowser
+
+import hub
+
+VERSION = "2.0.0"
+ACTIVE = {"queued", "running", "stopping"}
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+class TaskManager:
+    def __init__(self, directory=None, command_factory=None):
+        self.directory = hub.private_dir(directory or hub.STATE / "dashboard" / "tasks")
+        self.lock = threading.RLock()
+        self.tasks = {}
+        self.processes = {}
+        self.command_factory = command_factory or self.command
+        for path in sorted(self.directory.glob("*.json"), reverse=True)[:100]:
+            try:
+                item = json.loads(path.read_text())
+                if item["status"] in ACTIVE:
+                    item.update(status="interrupted", ended_at=time.time())
+                    hub.save_json(path, item)
+                self.tasks[item["id"]] = item
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+
+    @staticmethod
+    def command(task):
+        args = [sys.executable, "-u", str(hub.ROOT / "hub.py"), "run", "--project", task["project"],
+                "--backend", task["backend"], "--quality", task["quality"]]
+        if task["mode"] == "build":
+            args.append("--apply")
+        return args + ["--", task["prompt"]]
+
+    def persist(self, task):
+        hub.save_json(self.directory / (task["id"] + ".json"), task)
+
+    def list(self):
+        with self.lock:
+            return [dict(t) for t in sorted(self.tasks.values(), key=lambda t: t["created_at"], reverse=True)[:50]]
+
+    def active(self):
+        return next((t for t in self.list() if t["status"] in ACTIVE), None)
+
+    def start(self, data):
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object.")
+        prompt, project = data.get("prompt"), data.get("project")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 12000:
+            raise ValueError("Enter a task of 1–12,000 characters.")
+        if not isinstance(project, str) or not project.strip() or len(project) > 4096:
+            raise ValueError("Choose a project folder.")
+        project = Path(project).expanduser().resolve()
+        if not project.is_dir():
+            raise ValueError("The project folder does not exist.")
+        backend, quality, mode = data.get("backend", "auto"), data.get("quality", "fast"), data.get("mode", "analysis")
+        if backend not in ("auto", "antigravity", "free", "local") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
+            raise ValueError("Choose a valid route, quality and task mode.")
+        with self.lock:
+            if self.active():
+                raise RuntimeError("A task is already running. Stop it or wait for it to finish.")
+            task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project),
+                    "backend": backend, "quality": quality, "mode": mode, "created_at": time.time(),
+                    "started_at": None, "ended_at": None, "status": "queued", "exit_code": None}
+            self.tasks[task["id"]] = task
+            self.persist(task)
+            threading.Thread(target=self._run, args=(task,), daemon=True).start()
+            return dict(task)
+
+    def _run(self, task):
+        process = None
+        path = self.directory / (task["id"] + ".log")
+        try:
+            with self.lock:
+                if task["status"] == "stopping":
+                    task.update(status="canceled", ended_at=time.time())
+                    self.persist(task)
+                    return
+                env = dict(os.environ, PYTHONUNBUFFERED="1", CODING_HUB_STATE=str(hub.STATE))
+                process = subprocess.Popen(self.command_factory(task), cwd=task["project"], env=env,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, errors="replace", start_new_session=(os.name != "nt"))
+                self.processes[task["id"]] = process
+                task.update(status="running", started_at=time.time())
+                self.persist(task)
+            with path.open("w") as log:
+                path.chmod(0o600)
+                for line in process.stdout:
+                    log.write(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", line))
+                    log.flush()
+            code = process.wait()
+            with self.lock:
+                task["status"] = "canceled" if task["status"] == "stopping" or code in (130, 143, -2, -15) else "completed" if code == 0 else "failed"
+                task["exit_code"] = code
+        except Exception as error:
+            with path.open("a") as log:
+                path.chmod(0o600)
+                log.write(f"\nCould not run task: {error}\n")
+            with self.lock:
+                task["status"] = "failed"
+        finally:
+            if process and process.stdout:
+                process.stdout.close()
+            with self.lock:
+                task["ended_at"] = time.time()
+                self.processes.pop(task["id"], None)
+                self.persist(task)
+
+    def detail(self, identifier):
+        with self.lock:
+            if identifier not in self.tasks:
+                raise KeyError("Task not found.")
+            task = dict(self.tasks[identifier])
+        path = self.directory / (identifier + ".log")
+        output = ""
+        if path.exists():
+            with path.open("rb") as stream:
+                stream.seek(max(0, path.stat().st_size - 160000))
+                output = stream.read().decode("utf-8", errors="replace")
+        return dict(task, output=output)
+
+    def stop(self, identifier):
+        with self.lock:
+            task = self.tasks.get(identifier)
+            if not task:
+                raise KeyError("Task not found.")
+            if task["status"] not in ACTIVE:
+                return dict(task)
+            task["status"] = "stopping"
+            self.persist(task)
+            process = self.processes.get(identifier)
+            if process and process.poll() is None:
+                process.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
+            return dict(task)
+
+    def close(self):
+        for item in self.list():
+            if item["status"] in ACTIVE:
+                self.stop(item["id"])
+
+
+class StatusCache:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.updating = False
+        self.updated = 0
+        self.value = {"checking": True, "home": str(Path.home()), "default_project": str(Path.home() / "Documents"),
+                      "version": VERSION, "programs": {}, "models": [], "loaded": [], "gpu": None,
+                      "free_models": [], "pricing_checked_at": None, "ram": None}
+
+    @staticmethod
+    def gpu():
+        binary = hub.executable("nvidia-smi")
+        if not binary:
+            return None
+        try:
+            result = subprocess.run([binary, "--query-gpu=name,memory.total,memory.used,utilization.gpu", "--format=csv,noheader,nounits"],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode:
+                return None
+            values = [v.strip() for v in result.stdout.splitlines()[0].split(",")]
+            return {"name": values[0], "total_mb": int(values[1]), "used_mb": int(values[2]), "utilization": int(values[3])}
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            return None
+
+    @staticmethod
+    def ram():
+        try:
+            values = {line.split(":")[0]: int(line.split()[1]) for line in Path("/proc/meminfo").read_text().splitlines()}
+            return {"total_gb": round(values["MemTotal"] / 1048576, 1), "available_gb": round(values["MemAvailable"] / 1048576, 1)}
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def get(self, force=False):
+        with self.lock:
+            if not self.updating and (force or time.time() - self.updated > 20):
+                self.updating = True
+                threading.Thread(target=self.refresh, daemon=True).start()
+            return dict(self.value, refreshing=self.updating)
+
+    def refresh(self):
+        def safe(fn, default):
+            try:
+                return fn()
+            except Exception:
+                return default
+        try:
+            value = dict(self.value)
+            value["programs"] = {name: bool(hub.executable(name)) for name in ("agy", "opencode", "ollama")}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                tags = pool.submit(safe, hub.local_models, [])
+                loaded = pool.submit(safe, lambda: hub.get_json("http://127.0.0.1:11434/api/ps", 3).get("models", []), [])
+                gpu = pool.submit(self.gpu)
+                value.update(models=tags.result(), loaded=loaded.result(), gpu=gpu.result(), ram=self.ram())
+            # Dashboard prices may be cached; executing a free route always verifies afresh.
+            if not value.get("pricing_checked_at") or time.time() - value["pricing_checked_at"] > 300:
+                try:
+                    value["free_models"] = hub.refresh_free_models()
+                    value["pricing_checked_at"] = time.time()
+                    value["pricing_error"] = False
+                except Exception:
+                    value["pricing_error"] = True
+            value.update(checking=False, local_ready=hub.LOCAL_AGENT_MODEL in value["models"], local_model=hub.LOCAL_AGENT_MODEL)
+            with self.lock:
+                self.value, self.updated = value, time.time()
+        finally:
+            with self.lock:
+                self.updating = False
+
+
+class DashboardServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address, manager=None, status=None, token=None):
+        self.manager = manager or TaskManager()
+        self.status = status or StatusCache()
+        self.token = token or secrets.token_urlsafe(32)
+        super().__init__(address, Handler)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: DashboardServer
+
+    def log_message(self, *args):
+        pass
+
+    def reply(self, code, body, kind="application/json"):
+        if kind == "application/json":
+            body = json.dumps(body, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", kind + ("; charset=utf-8" if kind.startswith("text/") else ""))
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def allowed(self, api=False):
+        port = self.server.server_port
+        host = self.headers.get("Host", "")
+        if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            self.reply(421, {"error": "Use the local dashboard address."})
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin != f"http://{host}":
+            self.reply(403, {"error": "Cross-origin requests are not accepted."})
+            return False
+        if api and not hmac.compare_digest(self.headers.get("X-CodeHub-Token", ""), self.server.token):
+            self.reply(401, {"error": "Reopen Coding Hub from its app icon to reconnect."})
+            return False
+        return True
+
+    def do_GET(self):
+        parsed = urlsplit(self.path)
+        if not self.allowed(parsed.path.startswith("/api/")):
+            return
+        try:
+            if parsed.path == "/api/health":
+                return self.reply(200, {"app": "coding-hub", "version": VERSION})
+            if parsed.path == "/api/status":
+                return self.reply(200, self.server.status.get())
+            if parsed.path == "/api/tasks":
+                return self.reply(200, {"tasks": self.server.manager.list()})
+            if parsed.path.startswith("/api/tasks/"):
+                return self.reply(200, self.server.manager.detail(parsed.path.rsplit("/", 1)[1]))
+            if parsed.path == "/api/folders":
+                folder = Path(parse_qs(parsed.query).get("path", [str(Path.home())])[0]).expanduser().resolve()
+                if not folder.is_dir():
+                    raise ValueError("Folder not found.")
+                children = sorted((p for p in folder.iterdir() if not p.name.startswith(".") and p.is_dir()), key=lambda p: p.name.lower())[:200]
+                return self.reply(200, {"path": str(folder), "parent": str(folder.parent),
+                                        "folders": [{"name": p.name, "path": str(p)} for p in children]})
+            static = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}
+            if parsed.path in static:
+                path = ASSETS / static[parsed.path]
+                return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+            self.reply(404, {"error": "Not found."})
+        except KeyError:
+            self.reply(404, {"error": "Task not found."})
+        except (ValueError, OSError) as error:
+            self.reply(400, {"error": str(error)})
+
+    def do_POST(self):
+        if not self.allowed(True):
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 32768:
+                return self.reply(413, {"error": "Request must be 1–32,768 bytes."})
+            if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                return self.reply(415, {"error": "Use application/json."})
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise ValueError("Expected a JSON object.")
+            if self.path == "/api/tasks":
+                return self.reply(201, self.server.manager.start(data))
+            if self.path == "/api/stop":
+                return self.reply(200, self.server.manager.stop(data.get("id", "")))
+            if self.path == "/api/refresh":
+                return self.reply(200, self.server.status.get(True))
+            if self.path == "/api/unload":
+                if self.server.manager.active():
+                    raise RuntimeError("Wait for the active task to finish before releasing memory.")
+                request = urllib.request.Request("http://127.0.0.1:11434/api/generate",
+                    data=json.dumps({"model": hub.LOCAL_AGENT_MODEL, "keep_alive": 0}).encode(), headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    response.read()
+                self.server.status.get(True)
+                return self.reply(200, {"ok": True})
+            self.reply(404, {"error": "Not found."})
+        except RuntimeError as error:
+            self.reply(409, {"error": str(error)})
+        except KeyError:
+            self.reply(404, {"error": "Task not found."})
+        except (ValueError, OSError, TypeError) as error:
+            self.reply(400, {"error": str(error)})
+
+
+def session_url():
+    """Return an authenticated local URL only after checking the running server."""
+    try:
+        existing = json.loads((hub.STATE / "dashboard" / "server.json").read_text())
+        port, token = int(existing["port"]), existing["token"]
+        if not 0 < port < 65536 or not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{20,128}", token):
+            return None
+        address = f"http://127.0.0.1:{port}"
+        request = urllib.request.Request(address + "/api/health", headers={"X-CodeHub-Token": token})
+        with urllib.request.urlopen(request, timeout=2) as response:
+            if json.load(response).get("app") == "coding-hub":
+                return address + "/#" + token
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def serve(port=8765, open_browser=True):
+    descriptor = hub.STATE / "dashboard" / "server.json"
+    # Repeated launches reuse the server and its private session.
+    existing = session_url()
+    if existing:
+        if open_browser:
+            webbrowser.open(existing)
+        print("Dashboard is already running at " + existing.split("/#")[0], flush=True)
+        return 0
+    try:
+        server = DashboardServer(("127.0.0.1", port))
+    except OSError:
+        if not port:
+            raise
+        server = DashboardServer(("127.0.0.1", 0))
+    address = f"http://127.0.0.1:{server.server_port}"
+    hub.save_json(descriptor, {"pid": os.getpid(), "port": server.server_port, "token": server.token})
+    server.status.get()
+    print("Coding Hub dashboard: " + address, flush=True)
+    print("Open the app icon to connect securely. Press Ctrl+C to stop the server.", flush=True)
+    if open_browser:
+        webbrowser.open(address + "/#" + server.token)
+    try:
+        server.serve_forever(poll_interval=0.3)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.manager.close()
+        server.server_close()
+        try:
+            if json.loads(descriptor.read_text()).get("pid") == os.getpid():
+                descriptor.unlink()
+        except (OSError, ValueError):
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-browser", action="store_true")
+    args = parser.parse_args()
+    sys.exit(serve(args.port, not args.no_browser))

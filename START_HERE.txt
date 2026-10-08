@@ -1,0 +1,23 @@
+CODING HUB
+
+Three ways to use Coding Hub:
+  codehub       Terminal menu and commands
+  codehub app   Standalone Linux app with its own window and icon
+  codehub web   Dashboard in your browser
+
+Open Coding Hub from your Linux Applications menu for the standalone app.
+Use ~/.local/bin/codehub if the command is not on your PATH.
+
+The dashboard lets you choose a project, run a task, see live output, stop a task,
+and revisit recent work. Analysis is the default; enable edits for implementation.
+
+Automatic routing: Antigravity -> verified free OpenCode models -> local Qwen 3 8B.
+Free cloud access has provider quotas. Local Qwen is best for focused, small tasks.
+
+Terminal menu: codehub
+Status: codehub status
+Local interactive agent: codehub open --backend local --project ~/my-project
+
+Read README.md for installation, privacy, limits, and usage.
+Driver setup instructions: docs/gpu-setup.md
+Task logs and settings: ~/.local/state/coding-hub (keep these private).
