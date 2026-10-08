@@ -120,6 +120,17 @@ def main():
             assert not app.error.get_visible(), app.error.get_text()
             assert Gtk.Settings.get_default().get_property('gtk-theme-name') == 'Adwaita'
             assert not app.sidebar_tools.get_expanded()
+            assert app.workspace_split.get_position() == 248
+            assert app.sidebar.get_width() <= 260, app.sidebar.get_width()
+            app.workspace_split.set_position(300)
+            settle(.5)
+            assert app.workspace_split.get_position() == 300
+            assert json.loads(app.preferences_path.read_text())['sidebar_width'] == 300
+            app.theme_switch.set_active(True)
+            assert json.loads(app.preferences_path.read_text())['sidebar_width'] == 300
+            app.theme_switch.set_active(False)
+            app.workspace_split.set_position(248)
+            settle(.5)
             assert app.connection.get_text() == '●  Connected locally'
             assert not app.release_button.get_sensitive()
             app.open_web_button.emit('clicked')
@@ -333,7 +344,21 @@ def main():
             group = app.project_tree.get_first_child()
             row = group.get_child().get_first_child().get_next_sibling()
             assert row.get_last_child().get_tooltip_text().startswith('Delete chat:')
-            row.get_last_child().emit('clicked')
+            remove = row.get_last_child()
+            assert remove.get_opacity() == 0, 'Trash should be hidden until hover or focus'
+            controllers = row.observe_controllers()
+            motion = next(controllers.get_item(i) for i in range(controllers.get_n_items()) if isinstance(controllers.get_item(i), Gtk.EventControllerMotion))
+            motion.emit('enter', 10.0, 10.0)
+            assert remove.get_opacity() == 1
+            motion.emit('leave')
+            assert remove.get_opacity() == 0
+            remove.grab_focus()
+            settle()
+            assert remove.get_opacity() == 1, 'Keyboard focus must reveal the delete action'
+            app.prompt.grab_focus()
+            settle()
+            assert remove.get_opacity() == 0
+            remove.emit('clicked')
             settle()
             capture(app.delete_dialog, 'desktop-delete-light.png')
             app.delete_dialog.response(Gtk.ResponseType.CANCEL)

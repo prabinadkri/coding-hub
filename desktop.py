@@ -146,6 +146,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.free_signature = None
             self.draft_path = hub.STATE / "desktop" / "draft.json"
             self.preferences_path = hub.STATE / 'desktop' / 'preferences.json'
+            self.sidebar_save_source = None
 
         @staticmethod
         def row(spacing=12):
@@ -243,8 +244,15 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.keyboard = keyboard
             keyboard.connect('key-pressed', self.shortcut)
             self.window.add_controller(keyboard)
-            shell = self.row(0)
-            sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=225)
+            shell = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            shell.add_css_class('workspace-split')
+            shell.set_resize_start_child(False)
+            shell.set_shrink_start_child(False)
+            shell.set_resize_end_child(True)
+            shell.set_shrink_end_child(False)
+            self.workspace_split = shell
+            sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=200)
+            self.sidebar = sidebar
             sidebar.add_css_class('sidebar')
             brand = self.row(10)
             picture = Gtk.Image.new_from_file(str(hub.ROOT / 'assets' / 'icon.svg'))
@@ -291,13 +299,19 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             sidebar.append(self.sidebar_tools)
             sidebar.append(self.label('Local workspace', 'sidebar-foot'))
             sidebar.append(self.label('Version ' + dashboard.VERSION, 'sidebar-foot'))
-            shell.append(sidebar)
+            shell.set_start_child(sidebar)
             main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             self.error = self.label('', 'error-banner')
             self.error.set_visible(False)
             main.append(self.error)
             main.append(self.stack)
-            shell.append(main)
+            shell.set_end_child(main)
+            try:
+                width = int(json.loads(self.preferences_path.read_text()).get('sidebar_width', 248))
+            except (OSError, ValueError, TypeError):
+                width = 248
+            shell.set_position(max(220, min(420, width)))
+            shell.connect('notify::position', self.sidebar_resized)
             self.window.set_child(shell)
             self.stack.connect('notify::visible-child-name', self.page_changed)
             body = self.page_box('New conversation', 'workspace', 'Choose a project and start a focused conversation.')
@@ -496,7 +510,31 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.window.add_css_class('dark')
             else:
                 self.window.remove_css_class('dark')
-            hub.save_json(self.preferences_path, {'dark': dark})
+            self.save_preferences(dark=dark)
+
+        def save_preferences(self, **updates):
+            try:
+                preferences = json.loads(self.preferences_path.read_text())
+                if not isinstance(preferences, dict):
+                    preferences = {}
+            except (OSError, ValueError):
+                preferences = {}
+            preferences.update(updates)
+            hub.save_json(self.preferences_path, preferences)
+
+        def sidebar_resized(self, *_):
+            width = self.workspace_split.get_position()
+            bounded = max(220, min(420, width))
+            if width != bounded:
+                self.workspace_split.set_position(bounded)
+                return
+            if self.sidebar_save_source:
+                GLib.source_remove(self.sidebar_save_source)
+            def save():
+                self.sidebar_save_source = None
+                self.save_preferences(sidebar_width=self.workspace_split.get_position())
+                return False
+            self.sidebar_save_source = GLib.timeout_add(300, save)
 
         def chat_scrolled(self, adjustment):
             if not self.scroll_pending:
@@ -856,7 +894,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 note.set_wrap(True)
                 self.project_tree.append(note)
             for project in projects:
-                group = Gtk.Expander(label=project['name'])
+                group = Gtk.Expander()
+                project_label = Gtk.Label(label=project['name'], xalign=0, ellipsize=Pango.EllipsizeMode.END)
+                project_label.set_width_chars(1)
+                group.set_label_widget(project_label)
                 group.set_tooltip_text(project['project'])
                 group.set_expanded(project['project'] == self.conversation_project or expanded.get(project['project'], len(projects) == 1))
                 chats = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
@@ -869,16 +910,29 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 chats.append(self.button('+ New chat', new_in_project, 'project-new-chat'))
                 for chat in project['conversations']:
                     title = chat['goal'].replace('\n', ' ')
-                    button = self.button(title[:25] + ('…' if len(title) > 25 else ''),
+                    button = self.button(title,
                         lambda _, p=project['project'], c=chat['id']: self.open_chat(p, c))
+                    button.get_child().set_ellipsize(Pango.EllipsizeMode.END)
+                    button.get_child().set_width_chars(1)
+                    button.get_child().set_xalign(0)
                     button.set_tooltip_text(title)
                     if chat['id'] == self.conversation:
                         button.add_css_class('active-chat')
                     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+                    row.add_css_class('chat-row')
                     button.set_hexpand(True)
                     row.append(button)
                     remove = Gtk.Button.new_from_icon_name('user-trash-symbolic')
                     remove.add_css_class('chat-delete')
+                    remove.set_opacity(0)
+                    motion = Gtk.EventControllerMotion()
+                    focus = Gtk.EventControllerFocus()
+                    motion.connect('enter', lambda *_, target=remove: target.set_opacity(1))
+                    motion.connect('leave', lambda *_, target=remove, focus=focus: target.set_opacity(1 if focus.contains_focus() else 0))
+                    focus.connect('enter', lambda *_, target=remove: target.set_opacity(1))
+                    focus.connect('leave', lambda *_, target=remove, motion=motion: target.set_opacity(1 if motion.contains_pointer() else 0))
+                    row.add_controller(motion)
+                    row.add_controller(focus)
                     remove.set_tooltip_text('Delete chat: ' + title)
                     remove.connect('clicked', lambda _, p=project['project'], c=chat['id'], title=title: self.confirm_delete_chat(p, c, title))
                     row.append(remove)
@@ -1623,6 +1677,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def closed(self, window):
             self.save_draft()
+            if self.sidebar_save_source:
+                GLib.source_remove(self.sidebar_save_source)
+                self.sidebar_save_source = None
+            self.save_preferences(sidebar_width=self.workspace_split.get_position())
             self.closed_window = True
             self.executor.shutdown(wait=False, cancel_futures=True)
             hub.save_json(hub.STATE / "desktop" / "window.json",

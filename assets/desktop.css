@@ -132,3 +132,5 @@ window:not(.dark) entry selection, window:not(.dark) textview text selection { b
 
 .sidebar button.chat-delete{min-width:18px;min-height:18px;padding:5px;color:#99ae9d;background:transparent;}.sidebar button.chat-delete:hover{background:#503d37;color:#ffd2cc;}
 messagedialog button.destructive-action{background:#a83c32;color:#ffffff;}
+
+.workspace-split>separator{min-width:5px;padding:0;margin:0;border:0;background-image:none;background:#dce4da;}.workspace-split>separator:hover{background:#97b683;}.dark .workspace-split>separator{background:#29392f;}.dark .workspace-split>separator:hover{background:#789c65;}
