@@ -22,6 +22,16 @@ class ContextTests(unittest.TestCase):
         self.state.stop()
         self.temp.cleanup()
 
+    def test_old_replies_recover_assistant_text_without_rewriting_history(self):
+        chat = self.memory.conversation(goal='Review code')
+        original = '[tool] read · completed\nsource code\nThe answer is 42.'
+        self.memory.record(chat, 'old-task', 'Review code', original, 'completed')
+        log = hub.private_dir(hub.STATE / 'tasks' / 'old-task') / '1-local.log'
+        log.write_text(json.dumps({'type':'tool_use','part':{'tool':'read','state':{'output':'source code'}}})+'\n'+json.dumps({'type':'text','part':{'text':'The answer is 42.'}})+'\n')
+        self.assertEqual(self.memory.messages(chat)['turns'][0]['result'], 'The answer is 42.')
+        with self.memory.connect() as db:
+            self.assertEqual(db.execute('SELECT result FROM turns').fetchone()[0], original)
+
     def test_incremental_index_finds_symbols_and_updates_changed_and_deleted_files(self):
         path = self.project / 'module.py'
         path.write_text('def validate_checkout_total(amount):\n    return amount >= 0\n')

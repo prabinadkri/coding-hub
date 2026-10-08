@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from contextlib import contextmanager
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -52,6 +53,13 @@ def keywords(text):
 
 def fts_query(text):
     return ' OR '.join('"' + term + '"' for term in keywords(text))
+
+
+@lru_cache(maxsize=64)
+def recovered_reply(path, stamp):
+    # Older releases saved tool output alongside the answer. Recover from the
+    # provider's structured transcript without rewriting history or guessing.
+    return hub.assistant_result(Path(path))
 
 
 class ProjectMemory:
@@ -307,8 +315,23 @@ class ProjectMemory:
         for row in reversed(rows):
             turn = dict(row)
             task = turn['task']
-            turn['has_review'] = bool(re.fullmatch(r'[A-Za-z0-9_-]{1,100}', task) and
+            safe_task = bool(re.fullmatch(r'[A-Za-z0-9_-]{1,100}', task))
+            turn['has_review'] = bool(safe_task and
                                       (hub.STATE / 'tasks' / task / 'changes.json').is_file())
+            if safe_task and turn['result'].lstrip().startswith('[tool]'):
+                folder = hub.STATE / 'tasks' / task
+                logs = sorted(folder.glob('[0-9]*-*.log'), key=lambda p: p.stat().st_mtime, reverse=True)
+                for log in logs:
+                    try:
+                        stat = log.stat()
+                        if stat.st_size > 8 * 1024 * 1024 or log.is_symlink():
+                            continue
+                        answer = recovered_reply(str(log), (stat.st_mtime_ns, stat.st_size))
+                        if answer:
+                            turn['result'] = answer
+                            break
+                    except OSError:
+                        continue
             turns.append(turn)
         return dict(conversation, project=str(self.project), turns=turns, total_turns=total,
                     oldest_cursor=oldest, has_older=has_older)

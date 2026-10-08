@@ -267,6 +267,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.stack.connect('notify::visible-child-name', self.page_changed)
             body = self.page_box('New conversation', 'workspace', 'Choose a project and start a focused conversation.')
             self.chat_title = self.page_headings['workspace']
+            self.chat_title.set_wrap(False)
+            self.chat_title.set_ellipsize(Pango.EllipsizeMode.END)
             self.chat_subtitle = self.page_subtitles['workspace']
             self.workspace_body = body
             body.set_spacing(10)
