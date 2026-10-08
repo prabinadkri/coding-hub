@@ -26,9 +26,9 @@ import hub
 import quota
 import free_quota
 import accounts
-from context_engine import ProjectMemory, project_tree
+from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.8.0"
+VERSION = "2.9.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -67,6 +67,8 @@ class TaskManager:
     def __init__(self, directory=None, command_factory=None):
         self.directory = hub.private_dir(directory or hub.STATE / "dashboard" / "tasks")
         self.lock = threading.RLock()
+        from task_history import HistoryIndex
+        self.history_index = HistoryIndex(self.directory)
         self.tasks = {}
         self.processes = {}
         self.command_factory = command_factory or self.command
@@ -106,6 +108,10 @@ class TaskManager:
                           if task['status'] in ACTIVE or (self.directory / (key + '.json')).is_file()}
             return [dict(t) for t in sorted(self.tasks.values(), key=lambda t: t["created_at"], reverse=True)[:50]]
 
+    def history(self, **filters):
+        with self.lock:
+            return self.history_index.page(**filters)
+
     def delete_conversation(self, data):
         project = data.get('project')
         if not isinstance(project, str) or not project.strip():
@@ -118,6 +124,12 @@ class TaskManager:
 
     def active(self):
         return next((t for t in self.list() if t["status"] in ACTIVE), None)
+
+    def delete_project(self, data):
+        with self.lock:
+            result = delete_project(data.get('project'), self.directory)
+            self.tasks = {key: task for key, task in self.tasks.items() if task.get('project') != result['deleted']}
+            return result
 
     def start(self, data):
         if not isinstance(data, dict):
@@ -197,9 +209,20 @@ class TaskManager:
     def detail(self, identifier):
         with self.lock:
             self.list()
-            if identifier not in self.tasks:
-                raise KeyError("Task not found.")
-            task = dict(self.tasks[identifier])
+            if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', identifier):
+                raise KeyError('Task not found.')
+            if identifier in self.tasks:
+                task = dict(self.tasks[identifier])
+            else:
+                path = self.directory / (identifier + '.json')
+                try:
+                    if path.is_symlink() or path.stat().st_size > 256 * 1024:
+                        raise ValueError('Invalid task record.')
+                    task = json.loads(path.read_text())
+                    if not isinstance(task, dict) or task.get('id') != identifier:
+                        raise ValueError('Invalid task record.')
+                except (OSError, ValueError):
+                    raise KeyError('Task not found.') from None
         path = self.directory / (identifier + ".log")
         output = ""
         if path.exists():
@@ -413,6 +436,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not project:
                     raise ValueError("Choose a project folder first.")
                 return self.reply(200, ProjectMemory(project).info())
+            if parsed.path == '/api/history':
+                query = parse_qs(parsed.query)
+                return self.reply(200, self.server.manager.history(
+                    query=query.get('q', [''])[0], status=query.get('status', [''])[0],
+                    route=query.get('route', [''])[0], offset=int(query.get('offset', ['0'])[0])))
             if parsed.path == "/api/tasks":
                 return self.reply(200, {"tasks": self.server.manager.list()})
             if parsed.path == "/api/projects":
@@ -483,6 +511,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, self.server.manager.stop(data.get("id", "")))
             if self.path == '/api/conversation/delete':
                 return self.reply(200, self.server.manager.delete_conversation(data))
+            if self.path == '/api/project/delete':
+                return self.reply(200, self.server.manager.delete_project(data))
             if self.path == "/api/refresh":
                 return self.reply(200, self.server.status.get(True))
             if self.path == "/api/quota/refresh":

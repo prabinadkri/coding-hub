@@ -536,6 +536,8 @@ def run_task(project, request, backend="auto", quality="fast", apply=False, dry_
             save_json(folder / "task.json", record)
             memory.record(conversation, task_id, request, result["output"], result["status"])
             terminal_reply(result["output"]) if concise else print(result["output"], flush=True)
+            if concise:
+                print(terminal_ui.style("  /details manager review, workers, and usage", "2"))
             return result["code"]
         for number, (route, model) in enumerate(routes, 1):
             print(f"\n[{number}] {route} → {model}", flush=True)
@@ -762,6 +764,18 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                     conversation = None
                     diagnostic_context = None
                     print('New conversation ready. Project memory is retained.'); continue
+                if name == '/delete-project':
+                    if is_general(memory.project):
+                        print('General chats are not a project. Use /delete to remove an individual chat.'); continue
+                    print('Remove ' + str(memory.project) + ' from Coding Hub?')
+                    print('This deletes its saved chats, task logs, and Coding Hub memory. The folder, source and instruction files stay on disk.')
+                    if input('Type remove project to confirm, or Enter to cancel: ').strip().lower() != 'remove project':
+                        print('Project kept.'); continue
+                    from context_engine import delete_project
+                    delete_project(str(memory.project))
+                    memory = ProjectMemory(general_workspace())
+                    conversation, diagnostic_context = None, None
+                    print('Project removed. Your files are still on disk. General chat ready.'); continue
                 if name == '/delete':
                     if not conversation:
                         print('There is no current chat to delete.'); continue
@@ -771,6 +785,10 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                     memory.delete_conversation(conversation)
                     conversation, diagnostic_context = None, None
                     print('Chat deleted. New conversation ready.'); continue
+                if name == '/details':
+                    turns = memory.messages(conversation, limit=1)['turns'] if conversation else []
+                    terminal_reply(turns[-1].get('details') or 'No Smart details for this reply.') if turns else print('No saved reply in this chat yet.')
+                    continue
                 if name == '/changes':
                     from change_review import show
                     show(memory.project); continue

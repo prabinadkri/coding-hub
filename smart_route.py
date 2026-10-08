@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import math
+import sys
 from pathlib import Path
 import subprocess
 import hub
@@ -191,12 +192,13 @@ def execute(project, request, quality, apply, context, folder, model=None, worke
         report['status'] = status
         totals = [item.get('total_tokens') for item in report['manager_usage']]
         report['manager_total_tokens'] = sum(totals) if totals and all(value is not None for value in totals) else None
+        report['reply'] = text
         hub.save_json(folder / 'smart.json', report)
         amount = report['manager_total_tokens']
         metrics = f"Smart: {report['manager_calls']}/2 manager calls · reported manager tokens: {amount if amount is not None else 'unavailable'}"
-        print('\n' + metrics)
-        print('Direct-route baseline was not run; token savings and equal quality are not guaranteed.')
-        return {'code': code, 'status': status, 'output': text + '\n\n' + metrics + '\nSavings versus direct Antigravity: unmeasured.', 'report': report}
+        if not sys.stdout.isatty():
+            print('\n' + metrics)
+        return {'code': code, 'status': status, 'output': text, 'report': report}
     # Keep tiny analysis requests to one manager call. Coding work gets a plan
     # followed by one review; never a recursive chain of paid-quality calls.
     parallel = workers > 1 and apply and not hub.is_general(project)
@@ -295,9 +297,7 @@ def execute(project, request, quality, apply, context, folder, model=None, worke
     review = result['response']
     report['review'] = review
     approved = review.get('verdict') == 'pass'
-    final = (parallel_summary + '\n\n' if parallel_summary else '') + output + '\n\nManager review: ' + str(review.get('verdict', 'unknown')) + '\n' + str(review.get('summary', ''))
-    if review.get('next_steps'):
-        final += '\nNext steps: ' + str(review['next_steps'])
-    if not approved:
-        final += '\nManager call limit reached. Changes are preserved; continue with a focused follow-up after reviewing these findings.'
+    from smart_presentation import attention
+    notice = attention(review)
+    final = output + ('\n\n' + notice if notice else '')
     return finish(0 if approved else 3, 'completed' if approved else 'needs_review', final)

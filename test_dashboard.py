@@ -76,6 +76,53 @@ class DashboardTests(unittest.TestCase):
         for endpoint in ('/api/projects', '/api/project', '/api/conversation', '/api/changes'):
             self.assertEqual(self.request(endpoint, token='')[0], 401)
         self.assertEqual(self.request('/api/conversation/delete', {}, token='')[0], 401)
+        self.assertEqual(self.request('/api/project/delete', {}, token='')[0], 401)
+
+    def test_history_search_filters_pagination_and_archived_detail(self):
+        for index in range(65):
+            item = dict(id=f'archived-{index:03}', prompt=f'Build widget {index}', project=str(self.project),
+                        backend='smart' if index % 2 else 'local', status='failed' if index % 3 == 0 else 'completed',
+                        created_at=index, started_at=index, ended_at=index + 1, output='Should not be in listing')
+            self.manager.persist(item)
+        code, data = self.request('/api/history')
+        self.assertEqual(code, 200)
+        self.assertEqual((data['total'], len(data['tasks']), data['tasks'][0]['id']), (65, 20, 'archived-064'))
+        self.assertNotIn('output', data['tasks'][0])
+        code, page = self.request('/api/history?offset=60')
+        self.assertEqual((page['offset'], len(page['tasks']), page['has_more']), (60, 5, False))
+        _, filtered = self.request('/api/history?status=attention&route=smart&q=widget')
+        self.assertTrue(filtered['tasks'])
+        self.assertTrue(all(t['status'] == 'failed' and t['backend'] == 'smart' for t in filtered['tasks']))
+        _, empty = self.request('/api/history?q=absent')
+        self.assertEqual(empty['total'], 0)
+        self.assertEqual(self.request('/api/history?offset=-1')[0], 400)
+        self.assertEqual(self.request('/api/history?status=invalid')[0], 400)
+        self.assertEqual(self.request('/api/history', token='wrong')[0], 401)
+        self.assertEqual(self.request('/api/tasks/archived-000')[0], 200)
+        (self.manager.directory / 'archived-000.json').unlink()
+        self.assertEqual(self.request('/api/history')[1]['total'], 64)
+        self.assertEqual(self.request('/api/tasks/archived-000')[0], 404)
+        # Invalid records and symbolic links never become history cards.
+        (self.manager.directory / 'bad.json').write_text('[]')
+        (self.manager.directory / 'linked.json').symlink_to(self.manager.directory / 'archived-001.json')
+        self.assertEqual(self.request('/api/history')[1]['total'], 64)
+
+    def test_project_delete_endpoint_clears_tasks_and_refuses_active_or_cross_origin_requests(self):
+        code, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Saved project'})
+        self.assertEqual(code, 201)
+        self.wait_task(task['id'])
+        body = {'project': str(self.project)}
+        self.assertEqual(self.request('/api/project/delete', body, origin='https://outside.example')[0], 403)
+        saved = self.manager.tasks[task['id']]
+        saved['status'] = 'queued'; self.manager.persist(saved)
+        self.assertEqual(self.request('/api/project/delete', body)[0], 409)
+        saved['status'] = 'completed'; self.manager.persist(saved)
+        self.assertEqual(self.request('/api/project/delete', body)[0], 200)
+        self.assertFalse(self.manager.list())
+        self.assertTrue(self.project.is_dir())
+        self.assertEqual(self.request('/api/projects')[1]['projects'], [])
+        self.assertEqual(self.request('/api/conversation?project='+str(self.project)+'&id='+task['conversation'])[0], 400)
+        self.assertEqual(self.request('/api/projects')[1]['projects'], [])
 
     def test_smart_manager_and_worker_choices_reach_the_task_command(self):
         code, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Build the app', 'backend': 'smart', 'model': 'claude-opus-4-6-thinking', 'workers': 2})

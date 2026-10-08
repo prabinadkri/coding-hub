@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import hub
-from context_engine import ProjectMemory
+from context_engine import ProjectMemory, delete_project, project_tree
 import quota
 
 
@@ -21,6 +21,77 @@ class ContextTests(unittest.TestCase):
     def tearDown(self):
         self.state.stop()
         self.temp.cleanup()
+
+    def test_project_removal_clears_hub_history_and_keeps_source_other_projects_and_general(self):
+        source = self.project / 'main.py'; source.write_text('user work\n')
+        self.memory.initialize_rules()
+        self.memory.remember('Private pinned requirement')
+        chat = self.memory.conversation(goal='Saved project chat')
+        self.memory.record(chat, 'project-run', 'private request', 'private result', 'completed')
+        other = self.root / 'other'; other.mkdir()
+        keep = ProjectMemory(other); kept_chat = keep.conversation(goal='Keep this project')
+        general = ProjectMemory(hub.general_workspace()); general_chat = general.conversation(goal='Keep general')
+        dashboard = hub.private_dir(hub.STATE / 'dashboard' / 'tasks')
+        for task, project in [('old-task', self.project), ('keep-task', other)]:
+            hub.save_json(dashboard / (task + '.json'), {'project': str(project.resolve()), 'status': 'completed'})
+            (dashboard / (task + '.log')).write_text('task log')
+        for task, data in [('project-run', {'conversation': chat}), ('interrupted', {'project': str(self.project.resolve())}), ('other-run', {'project': str(other.resolve())})]:
+            hub.save_json(hub.STATE / 'tasks' / task / 'task.json', data)
+        result = delete_project(str(self.project))
+        self.assertEqual(result['task_ids'], ['old-task'])
+        self.assertFalse((dashboard / 'old-task.log').exists())
+        self.assertTrue((dashboard / 'keep-task.json').exists())
+        self.assertFalse((hub.STATE / 'tasks' / 'project-run').exists())
+        self.assertFalse((hub.STATE / 'tasks' / 'interrupted').exists())
+        self.assertTrue((hub.STATE / 'tasks' / 'other-run').exists())
+        self.assertEqual(source.read_text(), 'user work\n')
+        self.assertTrue((self.project / 'CODING_HUB.md').exists())
+        self.assertEqual([p.name for p in self.memory.directory.iterdir()], ['project.json'])
+        self.assertEqual(keep.messages(kept_chat)['goal'], 'Keep this project')
+        self.assertEqual(general.messages(general_chat)['goal'], 'Keep general')
+        # A stale window reading memory must not restore the sidebar entry.
+        stale = ProjectMemory(self.project)
+        self.assertEqual(stale.notes(), '')
+        with self.assertRaises(ValueError): stale.messages(chat)
+        self.assertNotIn(str(self.project.resolve()), [p['project'] for p in project_tree()])
+        with self.assertRaises(ValueError): delete_project(str(self.project))
+        new_chat = stale.conversation(goal='Explicitly add this folder again')
+        self.assertEqual(stale.messages(new_chat)['total_turns'], 0)
+        self.assertIn(str(self.project.resolve()), [p['project'] for p in project_tree()])
+
+    def test_project_removal_handles_empty_or_missing_folders_and_blocks_active_work(self):
+        with hub.project_lock(self.project), self.assertRaises(RuntimeError):
+            delete_project(str(self.project))
+        directory = hub.private_dir(hub.STATE / 'dashboard' / 'tasks')
+        for status in ('queued', 'running', 'stopping'):
+            hub.save_json(directory / 'task.json', {'project': str(self.project.resolve()), 'status': status})
+            with self.assertRaises(RuntimeError): delete_project(str(self.project))
+        (directory / 'task.json').unlink()
+        self.project.rmdir()
+        self.assertEqual(project_tree()[0]['project'], str(self.project.resolve()))
+        delete_project(str(self.project))
+        self.assertFalse(project_tree())
+        for project in ('', None, str(self.root / 'unknown'), str(hub.general_workspace())):
+            with self.assertRaises(ValueError): delete_project(project)
+
+    def test_project_removal_never_follows_linked_storage_or_tasks(self):
+        chat = self.memory.conversation(goal='Remove')
+        outside = self.root / 'outside'; outside.mkdir()
+        (outside / 'keep.txt').write_text('keep')
+        root = hub.private_dir(hub.STATE / 'tasks')
+        (root / 'linked-run').symlink_to(outside, target_is_directory=True)
+        self.memory.record(chat, 'linked-run', 'q', 'a', 'completed')
+        self.memory.database.unlink()
+        self.memory.database.symlink_to(outside / 'keep.txt')
+        with self.assertRaises(ValueError): delete_project(str(self.project))
+        self.assertTrue((root / 'linked-run').is_symlink())
+        self.memory.database.unlink()
+        self.memory = ProjectMemory(self.project)
+        chat = self.memory.conversation(goal='Remove')
+        self.memory.record(chat, 'linked-run', 'q', 'a', 'completed')
+        delete_project(str(self.project))
+        self.assertFalse((root / 'linked-run').is_symlink())
+        self.assertEqual((outside / 'keep.txt').read_text(), 'keep')
 
     def test_delete_chat_removes_local_history_but_preserves_project_memory(self):
         from context_engine import project_tree
@@ -110,6 +181,17 @@ class ContextTests(unittest.TestCase):
         log = hub.private_dir(hub.STATE / 'tasks' / 'old-task') / '1-local.log'
         log.write_text(json.dumps({'type':'tool_use','part':{'tool':'read','state':{'output':'source code'}}})+'\n'+json.dumps({'type':'text','part':{'text':'The answer is 42.'}})+'\n')
         self.assertEqual(self.memory.messages(chat)['turns'][0]['result'], 'The answer is 42.')
+        with self.memory.connect() as db:
+            self.assertEqual(db.execute('SELECT result FROM turns').fetchone()[0], original)
+
+    def test_smart_details_are_separate_without_rewriting_saved_answer(self):
+        chat = self.memory.conversation(goal='Build parser')
+        original = 'Parser ready.\n\nManager review: pass\nChecks support completion.\n\nSmart: 2/2 manager calls · reported manager tokens: 300\nSavings versus direct Antigravity: unmeasured.'
+        self.memory.record(chat, 'smart-task', 'Build parser', original, 'completed')
+        hub.save_json(hub.STATE / 'tasks' / 'smart-task' / 'smart.json', {'review': {'verdict': 'pass', 'summary': 'Checks support completion.', 'next_steps': ''}, 'manager_total_tokens': 300})
+        turn = self.memory.messages(chat)['turns'][0]
+        self.assertEqual(turn['result'], 'Parser ready.')
+        self.assertIn('Checks support completion.', turn['details'])
         with self.memory.connect() as db:
             self.assertEqual(db.execute('SELECT result FROM turns').fetchone()[0], original)
 

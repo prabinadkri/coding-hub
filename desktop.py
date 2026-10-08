@@ -294,11 +294,22 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             tree_scroll.set_child(self.project_tree)
             sidebar.append(tree_scroll)
             self.sidebar_tree_scroll = tree_scroll
-            self.sidebar_tools = Gtk.Expander(label='Tools & settings', expanded=False)
-            self.sidebar_tools.set_child(tools_box)
+            self.sidebar_tools = Gtk.MenuButton()
+            self.sidebar_tools.add_css_class('tools-menu-button')
+            self.sidebar_tools.set_tooltip_text('Tools & settings')
+            tools_label = self.row(10)
+            tools_label.append(Gtk.Image.new_from_icon_name('emblem-system-symbolic'))
+            tools_label.append(self.label('Tools & settings'))
+            self.sidebar_tools.set_child(tools_label)
+            self.tools_popover = Gtk.Popover()
+            self.tools_popover.add_css_class('tools-popover')
+            tools_box.set_size_request(230, -1)
+            tools_box.prepend(self.label('WORKSPACE TOOLS', 'tools-heading'))
+            self.tools_popover.set_child(tools_box)
+            self.tools_popover.set_position(Gtk.PositionType.TOP)
+            self.sidebar_tools.set_popover(self.tools_popover)
             sidebar.append(self.sidebar_tools)
-            sidebar.append(self.label('Local workspace', 'sidebar-foot'))
-            sidebar.append(self.label('Version ' + dashboard.VERSION, 'sidebar-foot'))
+            sidebar.append(self.label('Local workspace · v' + dashboard.VERSION, 'sidebar-foot'))
             shell.set_start_child(sidebar)
             main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             self.error = self.label('', 'error-banner')
@@ -770,35 +781,80 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.background(lambda: api('tasks/' + task['id']), loaded)
 
         def build_history_page(self):
-            box = self.page_box('Task history', 'history', 'Review previous runs, results, and live task output.')
-            self.history_cards = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            box = self.page_box('Task history', 'history', 'Find previous runs across your chats. Newest first, 20 at a time.')
+            self.history_offset = 0
+            self.history_generation = 0
+            self.history_search = Gtk.SearchEntry(hexpand=True, placeholder_text='Search tasks or project folders')
+            self.history_search.connect('search-changed', self.filter_history)
+            box.append(self.history_search)
+            filters = self.row(8)
+            self.history_status = Gtk.DropDown.new_from_strings(['All statuses', 'In progress', 'Completed', 'Needs attention', 'Canceled'])
+            self.history_route = Gtk.DropDown.new_from_strings(['All routes', 'Auto', 'Smart', 'Antigravity', 'Free cloud', 'Local', 'Claude', 'ChatGPT'])
+            for picker in (self.history_status, self.history_route):
+                picker.set_hexpand(True)
+                picker.connect('notify::selected', self.filter_history)
+                filters.append(picker)
+            box.append(filters)
+            pager = self.row(8)
+            self.history_summary = self.label('Loading saved runs…', 'muted'); self.history_summary.set_hexpand(True)
+            self.history_previous = self.button('Previous', lambda *_: self.move_history(-20))
+            self.history_next = self.button('Next', lambda *_: self.move_history(20))
+            pager.append(self.history_summary); pager.append(self.history_previous); pager.append(self.history_next)
+            box.append(pager)
+            self.history_cards = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             box.append(self.history_cards)
 
+        def filter_history(self, *_):
+            self.history_offset = 0
+            self.history_signature = None
+            self.render_history()
+
+        def move_history(self, change):
+            self.history_offset = max(0, self.history_offset + change)
+            self.history_signature = None
+            self.render_history()
+
         def render_history(self):
-            signature = json.dumps([(t['id'], t['status']) for t in self.tasks])
+            if self.stack.get_visible_child_name() != 'history' or not hasattr(self, 'history_cards'):
+                return
+            status = ('', 'active', 'completed', 'attention', 'canceled')[self.history_status.get_selected()]
+            route = ('', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai')[self.history_route.get_selected()]
+            query = self.history_search.get_text()
+            signature = json.dumps([query, status, route, self.history_offset, [(t['id'], t['status']) for t in self.tasks], self.history_epoch])
             if signature == self.history_signature:
                 return
             self.history_signature = signature
-            self.clear_box(self.history_cards)
-            if not self.tasks:
-                empty = self.card()
-                empty.append(self.label('Your next idea starts here', 'section-title'))
-                empty.append(self.label('Start a conversation. Its progress and result will appear here.', 'muted'))
-                empty.append(self.button('New chat', self.new_task, 'primary'))
-                self.history_cards.append(empty)
-            for task in self.tasks:
-                button = self.button('', lambda _, t=task: self.select_history(t), 'history-item')
-                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-                head = self.row()
-                title = self.label(task['prompt'].replace('\n', ' ')[:140], 'section-title')
-                title.set_hexpand(True)
-                head.append(title)
-                head.append(self.label(task['status'].replace('_', ' ').capitalize(), 'pill'))
-                card.append(head)
-                stamp = datetime.fromtimestamp(task['created_at']).strftime('%d %b · %H:%M')
-                card.append(self.label(Path(task['project']).name + '  ·  ' + task['backend'] + '  ·  ' + stamp, 'muted'))
-                button.set_child(card)
-                self.history_cards.append(button)
+            self.history_generation += 1
+            generation = self.history_generation
+            self.history_summary.set_text('Loading saved runs…')
+            self.history_previous.set_sensitive(False); self.history_next.set_sensitive(False)
+            def loaded(data):
+                if generation != self.history_generation:
+                    return
+                self.history_offset = data['offset']
+                total, offset = data['total'], data['offset']
+                self.history_summary.set_text(f'{offset + 1}–{offset + len(data["tasks"])} of {total} runs' if total else 'No matching runs')
+                self.history_previous.set_sensitive(offset > 0); self.history_next.set_sensitive(data['has_more'])
+                self.clear_box(self.history_cards)
+                if not data['tasks']:
+                    self.history_cards.append(self.label('Try a different search or clear the filters.', 'muted'))
+                for task in data['tasks']:
+                    button = self.button('', lambda _, t=task: self.select_history(t), 'history-item')
+                    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+                    head = self.row()
+                    title = self.label(task['prompt'].replace('\n', ' ')[:140], 'section-title'); title.set_hexpand(True)
+                    head.append(title); head.append(self.label(task['status'].replace('_', ' ').capitalize(), 'pill'))
+                    card.append(head)
+                    stamp = datetime.fromtimestamp(task['created_at']).strftime('%d %b · %H:%M')
+                    card.append(self.label(Path(task['project']).name + '  ·  ' + task['backend'] + '  ·  ' + stamp, 'muted'))
+                    button.set_child(card); self.history_cards.append(button)
+            def failed(error):
+                if generation != self.history_generation:
+                    return
+                self.history_signature = None
+                self.history_summary.set_text('History unavailable: ' + str(error))
+            endpoint = 'history?q=' + quote(query) + '&status=' + status + '&route=' + route + '&offset=' + str(self.history_offset)
+            self.background(lambda: api(endpoint), loaded, failed)
 
         def show_task(self, task):
             if task["id"] != self.selected:
@@ -909,7 +965,13 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 group = Gtk.Expander()
                 project_label = Gtk.Label(label=project['name'], xalign=0, ellipsize=Pango.EllipsizeMode.END)
                 project_label.set_width_chars(1)
-                group.set_label_widget(project_label)
+                heading = self.row(4)
+                project_label.set_hexpand(True)
+                heading.append(project_label)
+                if project.get('scope') != 'general' and not hub.is_general(project['project']):
+                    self.hover_delete_button(heading, 'Remove project: ' + project['name'],
+                        lambda _, p=project['project'], title=project['name']: self.confirm_delete_project(p, title))
+                group.set_label_widget(heading)
                 group.set_tooltip_text(project['project'])
                 group.set_expanded(project['project'] == self.conversation_project or expanded.get(project['project'], len(projects) == 1))
                 chats = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
@@ -934,23 +996,72 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     row.add_css_class('chat-row')
                     button.set_hexpand(True)
                     row.append(button)
-                    remove = Gtk.Button.new_from_icon_name('user-trash-symbolic')
-                    remove.add_css_class('chat-delete')
-                    remove.set_opacity(0)
-                    motion = Gtk.EventControllerMotion()
-                    focus = Gtk.EventControllerFocus()
-                    motion.connect('enter', lambda *_, target=remove: target.set_opacity(1))
-                    motion.connect('leave', lambda *_, target=remove, focus=focus: target.set_opacity(1 if focus.contains_focus() else 0))
-                    focus.connect('enter', lambda *_, target=remove: target.set_opacity(1))
-                    focus.connect('leave', lambda *_, target=remove, motion=motion: target.set_opacity(1 if motion.contains_pointer() else 0))
-                    row.add_controller(motion)
-                    row.add_controller(focus)
-                    remove.set_tooltip_text('Delete chat: ' + title)
-                    remove.connect('clicked', lambda _, p=project['project'], c=chat['id'], title=title: self.confirm_delete_chat(p, c, title))
-                    row.append(remove)
+                    self.hover_delete_button(row, 'Delete chat: ' + title,
+                        lambda _, p=project['project'], c=chat['id'], title=title: self.confirm_delete_chat(p, c, title))
                     chats.append(row)
                 group.set_child(chats)
                 self.project_tree.append(group)
+
+        def hover_delete_button(self, row, tooltip, callback):
+            remove = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+            remove.add_css_class('chat-delete')
+            remove.set_opacity(0)
+            motion = Gtk.EventControllerMotion()
+            focus = Gtk.EventControllerFocus()
+            motion.connect('enter', lambda *_: remove.set_opacity(1))
+            motion.connect('leave', lambda *_: remove.set_opacity(1 if focus.contains_focus() else 0))
+            focus.connect('enter', lambda *_: remove.set_opacity(1))
+            focus.connect('leave', lambda *_: remove.set_opacity(1 if motion.contains_pointer() else 0))
+            row.add_controller(motion)
+            row.add_controller(focus)
+            remove.set_tooltip_text(tooltip)
+            remove.connect('clicked', callback)
+            row.append(remove)
+            return remove
+
+        def confirm_delete_project(self, project, title):
+            dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                message_type=Gtk.MessageType.QUESTION, text='Remove project from Coding Hub?',
+                secondary_text='“' + title[:160] + '”\n' + project + '\n\nThis deletes all its saved chats, task logs, and Coding Hub memory. The project folder, source files, and instruction files stay on disk. You can add the folder again, but deleted history cannot be restored.')
+            dialog.add_button('Cancel', Gtk.ResponseType.CANCEL)
+            dialog.add_button('Remove project', Gtk.ResponseType.ACCEPT).add_css_class('destructive-action')
+            dialog.set_default_response(Gtk.ResponseType.CANCEL)
+            def response(window, choice):
+                window.destroy()
+                if choice == Gtk.ResponseType.ACCEPT:
+                    self.delete_project(project)
+            dialog.connect('response', response)
+            self.delete_dialog = dialog
+            dialog.present()
+
+        def delete_project(self, project):
+            if self.deleting_chat:
+                return
+            self.deleting_chat = True
+            self.history_epoch += 1
+            def deleted(result):
+                self.deleting_chat = False
+                self.history_epoch += 1
+                self.tasks = [t for t in self.tasks if t.get('project') != project]
+                if self.current_project() == project:
+                    self.new_task()
+                    self.project.set_text('')
+                    self.save_draft()
+                if self.memory_project == project:
+                    self.memory_project = None
+                    self.requirements.get_buffer().set_text('')
+                    self.memory_stats.set_text('Project removed. Choose a project to view its memory.')
+                    self.save_memory_button.set_sensitive(False)
+                    self.init_memory_button.set_sensitive(False)
+                self.tree_signature = None
+                self.history_signature = None
+                self.refresh()
+            def failed(error):
+                self.deleting_chat = False
+                self.error.set_text(str(error))
+                self.error.set_visible(True)
+                self.refresh()
+            self.background(lambda: api('project/delete', {'project': project}), deleted, failed)
 
         def open_chat(self, project, identifier, task=None):
             epoch = self.history_epoch
@@ -1082,6 +1193,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     actions.append(self.message_action('Copy reply', 'edit-copy-symbolic', lambda *_: Gdk.Display.get_default().get_clipboard().set(text)))
                     if turn.get('has_review'):
                         actions.append(self.message_action('View changes', 'document-edit-symbolic', lambda *_, task=turn['task']: self.open_changes(task)))
+                    if turn.get('details'):
+                        actions.append(self.message_action('View details', 'view-list-symbolic', lambda *_, text=turn['details']: self.open_task_details(text)))
                     card.append(actions)
                 if status and status != 'completed':
                     card.append(self.label(status.replace('_', ' ').capitalize(), 'footnote'))
@@ -1134,6 +1247,29 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.pending_indicator[1].set_text(progress['label'])
             elapsed = max(0, int(time.time() - (task.get('started_at') or task['created_at'])))
             self.pending_indicator[2].set_text(str(elapsed // 60) + 'm ' + str(elapsed % 60) + 's · ' + progress['detail'])
+
+        def open_task_details(self, text):
+            window = Gtk.Window(title='Task details', transient_for=self.window, modal=True)
+            self.details_window = window
+            window.set_default_size(620, 560)
+            if self.theme_switch.get_active():
+                window.add_css_class('dark')
+            body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+            for edge in ('top', 'bottom', 'start', 'end'):
+                getattr(body, 'set_margin_' + edge)(20)
+            heading = self.row(12)
+            title = self.label('Task details', 'page-title'); title.set_hexpand(True)
+            heading.append(title); heading.append(self.button('Close', lambda *_: window.close()))
+            body.append(heading)
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            for kind, value in blocks(text):
+                label = self.label(value, 'section-title' if kind == 'heading' else 'reply-text')
+                label.set_selectable(True)
+                content.append(label)
+            scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_child(content); body.append(scroll)
+            window.set_child(body); window.present()
 
         def message_action(self, text, icon, callback):
             button = self.button('', callback, 'message-action')
@@ -1506,8 +1642,11 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def page_changed(self, *_):
             name = self.stack.get_visible_child_name()
+            if name == 'history':
+                self.history_signature = None
+                self.render_history()
             if hasattr(self, 'sidebar_tools'):
-                self.sidebar_tools.set_expanded(name != 'workspace')
+                self.tools_popover.popdown()
             titles = {'workspace': 'Chats', 'history': 'Task history', 'models': 'Models & hardware', 'usage': 'Usage & limits', 'memory': 'Project memory', 'accounts': 'Accounts'}
             self.page_title.set_text('Workspace / ' + titles.get(name, 'Chats'))
             for key, button in self.navigation.items():

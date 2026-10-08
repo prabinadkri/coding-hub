@@ -134,3 +134,15 @@ window:not(.dark) entry selection, window:not(.dark) textview text selection { b
 messagedialog button.destructive-action{background:#a83c32;color:#ffffff;}
 
 .workspace-split>separator{min-width:5px;padding:0;margin:0;border:0;background-image:none;background:#dce4da;}.workspace-split>separator:hover{background:#97b683;}.dark .workspace-split>separator{background:#29392f;}.dark .workspace-split>separator:hover{background:#789c65;}
+
+.sidebar .tools-menu-button > button { border: 1px solid #486052; border-radius: 10px; background: #294236; color: #e1eadc; padding: 12px; font-size: 12px; font-weight: 600; }
+.sidebar .tools-menu-button > button:hover { background: #355541; }
+.tools-popover contents { padding: 8px; border-radius: 14px; background: #f8faf6; border: 1px solid #dae3d7; color: #263d30; }
+.tools-popover .tools-heading { color: #798a75; font-size: 9px; font-weight: 700; letter-spacing: 1.3px; padding: 10px 12px; }
+.tools-popover button.nav-item { color: #405442; background: transparent; border: none; border-radius: 8px; padding: 11px 12px; font-size: 12px; }
+.tools-popover button.nav-item:hover, .tools-popover button.nav-item.selected { background: #e6efdf; color: #25442c; }
+.dark .tools-menu-button > button { background: #22372b; border-color: #3b5140; }
+.dark .tools-popover contents { background: #202e25; border-color: #405344; color: #e1e9de; }
+.dark .tools-popover .tools-heading { color: #9aae98; }
+.dark .tools-popover button.nav-item { color: #cfddce; }
+.dark .tools-popover button.nav-item:hover, .dark .tools-popover button.nav-item.selected { background: #334b36; }

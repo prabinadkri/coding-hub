@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from functools import lru_cache
 import hashlib
 import json
@@ -243,6 +243,7 @@ class ProjectMemory:
                 identifier = uuid.uuid4().hex
                 db.execute('INSERT INTO conversations VALUES(?,?,?,?)', (identifier, goal, time.time(), time.time()))
                 metadata = json.loads((self.directory / 'project.json').read_text())
+                metadata.pop('removed', None)
                 metadata['last_activity'] = time.time()
                 hub.save_json(self.directory / 'project.json', metadata)
         return identifier
@@ -400,9 +401,91 @@ class ProjectMemory:
                             break
                     except OSError:
                         continue
+            if safe_task:
+                from smart_presentation import read
+                turn['result'], turn['details'] = read(hub.STATE / 'tasks' / task, turn['result'])
             turns.append(turn)
         return dict(conversation, scope='general' if hub.is_general(self.project) else 'project', project=str(self.project), turns=turns, total_turns=total,
                     oldest_cursor=oldest, has_older=has_older)
+
+
+def delete_project(project, task_directory=None):
+    """Forget a registered workspace; never delete its source folder."""
+    if not isinstance(project, str) or not project.strip():
+        raise ValueError('Choose a saved project to remove.')
+    project = Path(project).expanduser().resolve()
+    if hub.is_general(project):
+        raise ValueError('General chats are not a project. Delete individual chats instead.')
+    directory = hub.STATE / 'projects' / hashlib.sha256(str(project).encode()).hexdigest()
+    metadata = directory / 'project.json'
+    database = directory / 'index.sqlite3'
+    dashboard = Path(task_directory or hub.STATE / 'dashboard' / 'tasks')
+    runs = hub.STATE / 'tasks'
+    with hub.project_lock(project):
+        for path in (directory.parent, directory, metadata, database, runs, dashboard.parent, dashboard):
+            if path.is_symlink():
+                raise ValueError('Project storage contains an unexpected link. Removal was canceled.')
+        try:
+            value = json.loads(metadata.read_text())
+        except (OSError, ValueError):
+            raise ValueError('This project is no longer saved in Coding Hub.') from None
+        if not isinstance(value, dict) or value.get('project') != str(project) or value.get('removed'):
+            raise ValueError('This project is no longer saved in Coding Hub.')
+        dashboard_files, dashboard_ids = [], []
+        for path in dashboard.glob('*.json'):
+            if path.is_symlink():
+                continue
+            try:
+                item = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            if not isinstance(item, dict) or item.get('project') != str(project):
+                continue
+            if item.get('status') in ('queued', 'running', 'stopping'):
+                raise RuntimeError('Wait for all tasks in this project to finish before removing it.')
+            dashboard_files.extend([path, path.with_suffix('.log')])
+            dashboard_ids.append(path.stem)
+        conversations, task_ids = set(), set()
+        if database.exists():
+            with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+                conversations = {r[0] for r in db.execute('SELECT id FROM conversations')}
+                task_ids = {r[0] for r in db.execute('SELECT task FROM turns')}
+        folders = []
+        for folder in runs.glob('*'):
+            if folder.is_symlink():
+                if folder.name in task_ids:
+                    folders.append(folder)
+                continue
+            if not folder.is_dir():
+                continue
+            matched = folder.name in task_ids
+            for name in ('task.json', 'context.json'):
+                path = folder / name
+                if path.is_symlink():
+                    continue
+                try:
+                    item = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                if item.get('project') and item['project'] != str(project):
+                    matched = False
+                    break
+                matched |= item.get('project') == str(project) or item.get('conversation') in conversations
+            if matched:
+                folders.append(folder)
+        for folder in folders:
+            folder.unlink() if folder.is_symlink() else shutil.rmtree(folder)
+        for path in dashboard_files:
+            path.unlink(missing_ok=True)
+        shutil.rmtree(directory)
+        # A small tombstone keeps stale windows / read-only polling from putting
+        # the project back. An explicitly started new conversation re-adds it.
+        hub.save_json(metadata, {'project': str(project), 'name': value.get('name', project.name),
+                                 'scope': 'project', 'removed': True})
+    recovered_reply.cache_clear()
+    return {'deleted': str(project), 'task_ids': dashboard_ids}
 
 
 def project_tree():
@@ -410,8 +493,14 @@ def project_tree():
     for metadata in (hub.STATE / 'projects').glob('*/project.json'):
         try:
             value = json.loads(metadata.read_text())
-            memory = ProjectMemory(value['project'])
-            with memory.connect() as db:
+            if value.get('removed') or metadata.is_symlink() or metadata.parent.is_symlink():
+                continue
+            database = metadata.parent / 'index.sqlite3'
+            if database.is_symlink():
+                continue
+            # Listing must not create storage or re-register a removed project.
+            with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+                db.row_factory = sqlite3.Row
                 conversations = [dict(r) for r in db.execute('SELECT id,goal,updated FROM conversations ORDER BY rowid DESC LIMIT 100')]
             projects.append(dict(value, conversations=conversations))
         except (OSError, ValueError, sqlite3.Error):

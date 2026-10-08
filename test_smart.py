@@ -52,7 +52,31 @@ class SmartTests(unittest.TestCase):
         self.assertEqual(report['manager_total_tokens'], 300)
         self.assertFalse(report['savings_verified'])
         self.assertIsNone(report['direct_baseline_tokens'])
-        self.assertIn('unmeasured', result['output'])
+        self.assertEqual('Implemented and checked.', result['output'])
+        self.assertEqual(report['reply'], result['output'])
+        from smart_presentation import details
+        self.assertIn('unmeasured', details(report))
+
+    def test_old_smart_replies_hide_only_known_details_and_preserve_findings(self):
+        from smart_presentation import presentation, read
+        report = {'review': self.review()['response'], 'manager_calls': 2, 'manager_total_tokens': 300}
+        trailer = '\n\nSmart: 2/2 manager calls · reported manager tokens: 300\nSavings versus direct Antigravity: unmeasured.'
+        original = 'Implemented parser.\n\nManager review: pass\nReviewed evidence.' + trailer
+        answer, details = presentation(original, report)
+        self.assertEqual(answer, 'Implemented parser.')
+        self.assertIn('Reviewed evidence.', details)
+        self.assertIn('300', details)
+        # Similar worker-authored content must not disappear.
+        self.assertEqual(presentation('Manager review: worker text', report)[0], 'Manager review: worker text')
+        report['review']['verdict'] = 'revise'
+        rejected = original.replace('Manager review: pass', 'Manager review: revise').replace(trailer, '\nManager call limit reached. Changes are preserved; continue with a focused follow-up after reviewing these findings.' + trailer)
+        answer, _ = presentation(rejected, report)
+        self.assertIn('Needs review: Reviewed evidence.', answer)
+        self.assertNotIn('Smart: 2/2', answer)
+        (self.folder / 'smart.json').write_text('{invalid')
+        self.assertEqual(read(self.folder, original), (original, ''))
+        (self.folder / 'smart.json').write_text(json.dumps({'assignments': [None]}))
+        self.assertEqual(read(self.folder, original), (original, ''))
 
     def test_short_analysis_skips_planning(self):
         result, manager, worker = self.run_route([self.review()], apply=False)
@@ -62,6 +86,7 @@ class SmartTests(unittest.TestCase):
     def test_rejected_review_stops_without_recursive_repairs(self):
         result, manager, worker = self.run_route([self.plan(), self.review('revise')])
         self.assertEqual(result['status'], 'needs_review')
+        self.assertIn('Needs review: Reviewed evidence.', result['output'])
         self.assertEqual(result['code'], 3)
         self.assertEqual(manager.call_count, 2)
         self.assertEqual(worker.call_count, 1)

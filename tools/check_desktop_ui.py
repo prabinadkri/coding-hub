@@ -52,10 +52,12 @@ def main():
             'output': 'Updated the dashboard spacing and navigation.\nValidation passed.'}
     conversation = {'id': 'preview-chat', 'project': project, 'goal': task['prompt'], 'total_turns': 1,
                     'turns': [{'rowid': 1, 'task': 'preview-task', 'has_review': True, 'request': task['prompt'], 'result': '## Changes\n- Clear navigation and grouped metrics.\n- Compact replies with **persistent memory**.\n\n## Checks\nLayout checks passed.\n\n```python\nprint("Ready to build")\n```', 'status': 'completed'}]}
+    conversation['turns'][0]['details'] = '## Manager review\nPass\nReviewed the supplied evidence.\n\n## Workers\nConcurrent workers: 2\n\n## Usage\nManager calls: 2/2\nReported manager tokens: 300\nSavings versus direct Antigravity: unmeasured.'
     sample_conversation = json.loads(json.dumps(conversation))
     requests = []
     posted_tasks = []
     deleted_chats = set()
+    deleted_projects = set()
 
     def api(path, body=None):
         requests.append((path, body))
@@ -68,14 +70,22 @@ def main():
         if path == 'conversation/delete':
             deleted_chats.add(body['id'])
             return {'deleted': body['id'], 'task_ids': ['preview-task']}
+        if path == 'project/delete':
+            deleted_projects.add(body['project'])
+            return {'deleted': body['project'], 'task_ids': ['preview-task']}
+        if path.startswith('history?'):
+            from urllib.parse import parse_qs, urlsplit
+            query = parse_qs(urlsplit(path).query)
+            rows = [] if query.get('q') == ['absent'] or query.get('status') == ['attention'] or query.get('route') == ['local'] else [task]
+            return {'tasks': rows, 'total': len(rows), 'offset': 0, 'limit': 20, 'has_more': False}
         if path == 'tasks':
             if body:
                 value = dict(task, id='preview-send', conversation=body.get('conversation') or 'preview-empty-chat', scope=body.get('scope','project'), project=str(hub.general_workspace()) if body.get('scope')=='general' else body['project'], prompt=body['prompt'], status='running', created_at=time.time(), started_at=time.time(), ended_at=None)
                 posted_tasks[:] = [value]
                 return value
-            return {'tasks': [t for t in posted_tasks + [task] if t['conversation'] not in deleted_chats]}
+            return {'tasks': [t for t in posted_tasks + [task] if t['conversation'] not in deleted_chats and t['project'] not in deleted_projects]}
         if path.startswith('tasks/'): return next((t for t in posted_tasks if path.endswith(t['id'])),task)
-        if path == 'projects': return {'projects': [{'name': 'studio', 'project': project, 'conversations': [] if 'preview-chat' in deleted_chats else [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
+        if path == 'projects': return {'projects': [] if project in deleted_projects else [{'name': 'studio', 'project': project, 'conversations': [] if 'preview-chat' in deleted_chats else [{'id': 'preview-chat', 'goal': task['prompt']}]}]}
         if path.startswith('conversation?'):
             if 'preview-empty-chat' in path:
                 current = posted_tasks[0] if posted_tasks else {'project':project,'prompt':'Create a page'}
@@ -125,7 +135,17 @@ def main():
             app.project.set_text(project)
             assert not app.error.get_visible(), app.error.get_text()
             assert Gtk.Settings.get_default().get_property('gtk-theme-name') == 'Adwaita'
-            assert not app.sidebar_tools.get_expanded()
+            assert isinstance(app.sidebar_tools, Gtk.MenuButton)
+            assert not app.tools_popover.get_visible()
+            app.sidebar_tools.popup()
+            settle()
+            assert app.tools_popover.get_visible()
+            capture(app.tools_popover, 'desktop-tools-light.png')
+            app.navigation['usage'].emit('clicked')
+            settle()
+            assert app.stack.get_visible_child_name() == 'usage'
+            assert not app.tools_popover.get_visible()
+            app.stack.set_visible_child_name('workspace')
             assert app.workspace_split.get_position() == 248
             assert app.sidebar.get_width() <= 260, app.sidebar.get_width()
             app.workspace_split.set_position(300)
@@ -134,6 +154,10 @@ def main():
             assert json.loads(app.preferences_path.read_text())['sidebar_width'] == 300
             app.theme_switch.set_active(True)
             assert json.loads(app.preferences_path.read_text())['sidebar_width'] == 300
+            app.sidebar_tools.popup()
+            settle()
+            capture(app.tools_popover, 'desktop-tools-dark.png')
+            app.tools_popover.popdown()
             app.theme_switch.set_active(False)
             app.workspace_split.set_position(248)
             settle(.5)
@@ -177,6 +201,28 @@ def main():
                 assert not app.composer_heading.get_visible()
                 assert app.prompt_placeholder.get_visible()
                 capture(app.window, f'desktop-chat-{width}.png')
+            assert not hasattr(app, 'details_window')
+            actions.get_last_child().emit('clicked')
+            settle()
+            assert app.details_window.get_visible()
+            capture(app.details_window, 'desktop-task-details.png')
+            app.details_window.close()
+            app.theme_switch.set_active(True)
+            app.open_task_details(conversation['turns'][0]['details']); settle()
+            assert app.details_window.has_css_class('dark')
+            capture(app.details_window, 'desktop-task-details-dark.png')
+            app.details_window.close()
+            app.theme_switch.set_active(False)
+            app.stack.set_visible_child_name('history'); settle()
+            assert app.history_summary.get_text() == '1–1 of 1 runs'
+            app.history_search.set_text('absent'); settle()
+            assert app.history_summary.get_text() == 'No matching runs'
+            app.history_search.set_text(''); settle()
+            app.history_status.set_selected(3); settle()
+            assert app.history_summary.get_text() == 'No matching runs'
+            app.history_status.set_selected(0); settle()
+            assert app.history_cards.get_first_child() is not None
+            app.stack.set_visible_child_name('workspace')
             app.open_changes('preview-task')
             settle()
             assert app.review_window.get_visible()
@@ -304,7 +350,7 @@ def main():
             assert app.message_archive
             app.new_task()
             assert not app.message_archive and app.archive_conversation is None
-            assert not app.sidebar_tools.get_expanded()
+            assert not app.tools_popover.get_visible()
             empty = Path(temporary) / 'empty-project'
             empty.mkdir()
             app.scope.set_selected(1)
@@ -399,7 +445,36 @@ def main():
             assert not app.tasks and not app.deleting_chat
             assert not app.error.get_visible(), app.error.get_text()
             assert json.loads(app.draft_path.read_text())['conversation'] is None
-            print(json.dumps({'rendered': 23, 'native_workflows': 'passed', 'provider_requests': 0}))
+            # Project removal is distinct from deleting one conversation.
+            app.scope.set_selected(1)
+            app.project.set_text(project)
+            app.load_memory()
+            settle()
+            app.theme_switch.set_active(False)
+            heading = app.project_tree.get_first_child().get_label_widget()
+            remove_project = heading.get_last_child()
+            assert remove_project.get_tooltip_text() == 'Remove project: studio'
+            assert remove_project.get_opacity() == 0
+            remove_project.grab_focus()
+            settle()
+            assert remove_project.get_opacity() == 1
+            remove_project.emit('clicked')
+            settle()
+            capture(app.delete_dialog, 'desktop-remove-project-light.png')
+            app.delete_dialog.response(Gtk.ResponseType.CANCEL)
+            assert not deleted_projects
+            app.theme_switch.set_active(True)
+            app.confirm_delete_project(project, 'studio')
+            settle()
+            capture(app.delete_dialog, 'desktop-remove-project-dark.png')
+            app.delete_dialog.response(Gtk.ResponseType.ACCEPT)
+            settle(.7)
+            assert deleted_projects == {project}
+            assert app.conversation is None and app.current_project() == ''
+            assert app.memory_project is None and not app.save_memory_button.get_sensitive()
+            assert not app.tasks and not app.error.get_visible(), app.error.get_text()
+            assert json.loads(app.draft_path.read_text())['project'] == ''
+            print(json.dumps({'rendered': 29, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-COMMANDS = ('/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/memory', '/changes', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
+COMMANDS = ('/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/delete-project', '/memory', '/changes', '/details', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
 
 
 def interactive():
@@ -43,7 +43,8 @@ def help_text():
     print('\n' + style('Agent'))
     print('  /route NAME       auto, smart, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model (Smart: Antigravity manager)\n  /workers 1|2|3    Smart maximum cloud workers; local stays serial\n  /mode analysis|build  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
     print('\n' + style('Project'))
-    print('  /changes          Review the latest task diff\n  /memory           Shared instructions and index coverage\n  /status           Project, route, model, and edit mode\n  /doctor           Check Linux; include report in your next message')
+    print('  /delete-project   Remove this project’s saved chats and Hub memory; keep files')
+    print('  /details          Show the latest reply’s Smart run details\n  /changes          Review the latest task diff\n  /memory           Shared instructions and index coverage\n  /status           Project, route, model, and edit mode\n  /doctor           Check Linux; include report in your next message')
     print(style('\n  Existing :commands work too. Use codehub quota for usage details.', '2'))
 
 

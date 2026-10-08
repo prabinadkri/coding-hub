@@ -15,6 +15,19 @@ import terminal_ui
 
 
 class TerminalTests(unittest.TestCase):
+    def test_project_delete_confirms_then_switches_to_general_chat(self):
+        from context_engine import ProjectMemory, project_tree
+        with tempfile.TemporaryDirectory() as temporary, patch.object(hub, 'STATE', Path(temporary) / 'state'):
+            project = Path(temporary) / 'project'; project.mkdir()
+            source = project / 'keep.py'; source.write_text('keep')
+            memory = ProjectMemory(project); memory.conversation(goal='Old chat')
+            commands = iter(['/delete-project', '', '/delete-project', 'remove project', 'Explain Linux', '/quit'])
+            with patch('builtins.input', side_effect=lambda _: next(commands)), patch.object(hub, 'run_task', return_value=0) as run, contextlib.redirect_stdout(io.StringIO()):
+                hub.chat(project)
+            self.assertTrue(hub.is_general(run.call_args.args[0]))
+            self.assertEqual(source.read_text(), 'keep')
+            self.assertNotIn(str(project.resolve()), [p['project'] for p in project_tree()])
+
     def test_smart_model_and_workers_commands_apply_to_the_same_conversation(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / 'project'; project.mkdir()

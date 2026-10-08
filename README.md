@@ -42,7 +42,7 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 5. An animated indicator shows observed activity, such as planning, a tool action, waiting for the model, or review, with elapsed time. **Stop task** remains beside Send. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
 6. Replies format headings, lists, inline code, and code blocks. Replies span the reading area, with small copy/review actions beneath them and language labels on code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
 7. Toggle **Dark** in the title bar to save your appearance preference. **Project memory** opens shared requirements for the current project.
-8. Open **Tools & settings → Models & hardware** for system information. **Run system check** collects read-only diagnostics; **Discuss in general chat** prepares a message for you to send. This page also shows CPU/GPU activity, RAM/VRAM, and loaded model placement. “GPU available” means the driver works; “GPU acceleration in use” means Ollama reports model data on the GPU. GPU activity includes other applications. Samples normally refresh every 3–6 seconds.
+8. The separate **Tools & settings** gear button at the bottom of the sidebar opens a compact menu. Choose **Models & hardware** for system information. **Run system check** collects read-only diagnostics; **Discuss in general chat** prepares a message for you to send. This page also shows CPU/GPU activity, RAM/VRAM, and loaded model placement. “GPU available” means the driver works; “GPU acceleration in use” means Ollama reports model data on the GPU. GPU activity includes other applications. Samples normally refresh every 3–6 seconds.
 
 ### Browser
 
@@ -100,6 +100,7 @@ Inside `codehub chat`:
 - `/doctor` prints a read-only system report and includes it in your next message. `/new` clears that pending report.
 - `/changes` reviews the latest task diff; `/memory` shows shared instructions and source-index coverage; `/status` shows the current setup.
 - `/delete` removes the current chat after you type `delete` to confirm. Enter cancels. Project files and shared memory stay intact.
+- `/delete-project` removes the current project from Coding Hub after you type `remove project`. Enter cancels. The CLI then switches to a general chat; source files remain on disk.
 - `/new` starts another conversation; `/quit` exits. Existing `:commands` still work.
 - Ctrl+C cancels active work and preserves partial changes. At the input prompt, Ctrl+C exits the chat.
 
@@ -213,6 +214,12 @@ Deletion removes that chat’s saved messages, searchable conversation history, 
 
 Deleting the open chat takes you to a fresh chat. The app and browser refresh their shared history automatically; a terminal whose chat was deleted elsewhere must use `/new` before sending another task.
 
+## Remove a project
+
+Hover over a project heading in the app or browser sidebar, or reach it with keyboard focus, and choose its small trash icon. Confirm **Remove project** to remove all of that project's saved chats, task logs, change previews, checkpoints, source index, and pinned Coding Hub memory. **Cancel** leaves everything intact. The project folder, source files, Git history, and instruction files such as `CODING_HUB.md` and `CLAUDE.md` are never deleted. This only affects local Coding Hub records; provider-side sessions and usage records are separate.
+
+Removal is blocked while a task in that project is queued, running, or stopping. Removing the open project returns the app/browser to a new general chat and clears its saved selection. Other projects and General chats are preserved. You can choose the same folder and start a new chat to add it again; its deleted history and pinned notes cannot be restored. A small local removal marker prevents stale windows from re-adding it automatically. General chats have individual chat deletion, rather than a project removal action.
+
 ## Project instructions and long conversations
 
 Use **Project memory** in the app or browser to pin requirements that should apply to every task. Pinned text is kept verbatim, up to 4,000 UTF-8 bytes. It is saved privately outside the project. To create an editable instruction file inside a repository:
@@ -318,9 +325,17 @@ These renderings use an isolated temporary state directory and do not read your 
 
 Licensed under [MIT](LICENSE).
 
+### Finding previous runs
+
+Open **Tools & settings → Task history** when you need a run across chats. Search by task text or project folder, filter by status or route, and use **Previous / Next** to browse 20 runs per page, newest first. This includes archived runs beyond the recent activity list. Opening a result returns to its chat and task output. History is loaded on demand from local metadata, without loading every log or calling a model.
+
+![Filtered native task history with sample data](docs/desktop-history.png)
+
 ### Reviewing replies and file changes
 
-Replies use readable Markdown, code blocks, and a **Copy reply** button. The browser also offers **Copy** on each code block. Detailed tool output stays under **Task activity**.
+Replies use readable Markdown, code blocks, and a **Copy reply** button. The browser also offers **Copy** on each code block. Detailed tool output stays under **Task activity**. Smart replies show the main answer by default; the small **View details** action reveals the manager review, worker attempts, and reported token usage. Older saved Smart replies use the same presentation. Findings that need your attention remain in the main answer. In terminal chat, use `/details` for the latest reply’s Smart details. Opening details uses no model tokens.
+
+![Optional Smart run details with sample data](docs/desktop-task-details.png)
 
 After a new task with **Enable edits** finishes, choose **View changes** under its reply. Select a file to see green added lines, red removed lines, and line numbers in the diff headers. These are before/after snapshots of that task, so earlier edits are not presented as new work. Concurrent edits from another editor can still appear. This viewer is read-only; it does not commit or undo files.
 
