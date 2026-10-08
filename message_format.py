@@ -17,7 +17,7 @@ def clean_reply(text):
     return ''.join(pieces).strip()
 
 
-def blocks(text):
+def blocks(text, with_languages=False):
     result, paragraph, code, language, fenced = [], [], [], '', False
     def flush():
         if paragraph:
@@ -26,7 +26,7 @@ def blocks(text):
     for line in clean_reply(text).splitlines():
         if line.startswith('```'):
             if fenced:
-                result.append(('code', '\n'.join(code)))
+                result.append(('code', (language, '\n'.join(code)) if with_languages else '\n'.join(code)))
                 code.clear()
             else:
                 flush()
@@ -50,7 +50,7 @@ def blocks(text):
             paragraph.append(line)
     flush()
     if code:
-        result.append(('code', '\n'.join(code)))
+        result.append(('code', (language, '\n'.join(code)) if with_languages else '\n'.join(code)))
     return result
 
 

@@ -39,8 +39,8 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 2. Choose **New chat**, select an existing project folder, and describe the task. Existing chats keep their original project.
 3. Expand **Chat settings**. Select a route and then a model. Antigravity lists models available to your Google account, including any Claude/GPT options. Free cloud shows currently verified free models; Local shows installed Ollama models. Automatic and Smart select models for their stages.
 4. Leave **Allow edits & commands** off for explanations. Enable it to let the agent modify project files and run commands.
-5. Click **Send message** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
-6. Replies format headings, lists, inline code, and code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
+5. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
+6. Replies format headings, lists, inline code, and code blocks. Replies span the reading area, with small copy/review actions beneath them and language labels on code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
 7. Toggle **Dark** in the title bar to save your appearance preference. **Project memory** opens shared requirements for the current project.
 8. **Models & hardware** shows CPU/GPU activity, RAM/VRAM, and loaded model placement. “GPU available” means the driver works; “GPU acceleration in use” means Ollama reports model data on the GPU. GPU activity includes other applications. Samples normally refresh every 3–6 seconds.
 
@@ -295,3 +295,5 @@ Snapshots cover eligible source files, exclude ignored/sensitive-name/binary fil
 A model's **Price verified** status means its published price is zero; it does not guarantee service access. If OpenCode's free service returns “free tier can only be used from within OpenCode” even from the official CLI, choose Antigravity or Local. Related upstream reports include [an official CLI free-tier rejection](https://github.com/anomalyco/opencode/issues/52907). Coding Hub keeps analysis-mode permissions restricted and does not bypass provider access controls.
 
 If Claude reports an expired OAuth session, open **Accounts → Claude → Sign in** and reconnect. “Sign-in saved” only indicates saved sign-in metadata; the provider confirms validity when used. ChatGPT requires an explicit model selection after subscription sign-in.
+
+The native **Open web** action uses the Linux desktop’s browser launcher and reports launch errors. Snap and Flatpak browser registrations are recognized even when the app was started over SSH. If no browser is configured, choose one in Linux **Settings → Default Apps**.

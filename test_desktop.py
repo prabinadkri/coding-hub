@@ -22,6 +22,15 @@ class DesktopTests(unittest.TestCase):
                     self.assertIsNone(dashboard.session_url())
                     request.assert_not_called()
 
+    def test_browser_registration_paths_are_preserved_and_extended(self):
+        with patch.dict(os.environ, {'XDG_DATA_DIRS':'/custom/share:/usr/share'}), patch.object(Path, 'is_dir', return_value=True):
+            desktop.prepare_browser_environment()
+            paths = os.environ['XDG_DATA_DIRS'].split(':')
+            self.assertEqual(paths[:2], ['/custom/share','/usr/share'])
+            self.assertIn('/var/lib/snapd/desktop', paths)
+            desktop.prepare_browser_environment()
+            self.assertEqual(os.environ['XDG_DATA_DIRS'].split(':'), paths)
+
     @unittest.skipIf(os.name == "nt", "Unix background server lifecycle")
     def test_app_starts_a_real_server_then_reuses_it(self):
         children = []

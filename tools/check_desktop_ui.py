@@ -46,6 +46,7 @@ def main():
             'output': 'Updated the dashboard spacing and navigation.\nValidation passed.'}
     conversation = {'id': 'preview-chat', 'project': project, 'goal': task['prompt'], 'total_turns': 1,
                     'turns': [{'rowid': 1, 'task': 'preview-task', 'has_review': True, 'request': task['prompt'], 'result': '## Changes\n- Clear navigation and grouped metrics.\n- Compact replies with **persistent memory**.\n\n## Checks\nLayout checks passed.\n\n```python\nprint("Ready to build")\n```', 'status': 'completed'}]}
+    sample_conversation = json.loads(json.dumps(conversation))
     requests = []
 
     def api(path, body=None):
@@ -77,7 +78,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix='coding-hub-ui-') as temporary:
         old_state = hub.STATE
         hub.STATE = Path(temporary)
-        app = desktop.create_application(Gtk, Gdk, Gio, GLib, api, 'http://127.0.0.1:8765/')
+        browser_requests = []
+        def browser_launcher(Gtk, Gdk, Gio, parent, url, finished):
+            browser_requests.append(url)
+            finished(True, None)
+        app = desktop.create_application(Gtk, Gdk, Gio, GLib, api, 'http://127.0.0.1:8765/', browser_launcher=browser_launcher)
         try:
             app.register(None)
             app.activate()
@@ -86,6 +91,10 @@ def main():
             assert not app.error.get_visible(), app.error.get_text()
             assert app.connection.get_text() == '●  Connected locally'
             assert not app.release_button.get_sensitive()
+            app.open_web_button.emit('clicked')
+            assert browser_requests == ['http://127.0.0.1:8765/']
+            assert app.open_web_button.get_sensitive()
+            assert not app.error.get_visible()
             for width in (1240, 980):
                 app.window.set_default_size(width, 840)
                 for page in ('workspace', 'usage', 'models', 'history', 'memory', 'accounts'):
@@ -118,9 +127,13 @@ def main():
                 assert user_card.has_css_class('user-message')
                 assert assistant_card.has_css_class('assistant-message')
                 assert user_card.get_halign() == Gtk.Align.END
-                assert assistant_card.get_halign() == Gtk.Align.START
+                assert assistant_card.get_halign() == Gtk.Align.FILL
                 assert user_card.get_width() < app.chat_scroll.get_width() - 50
-                assert assistant_card.get_width() < app.chat_scroll.get_width() - 50
+                assert app.chat_scroll.get_width() * .85 < assistant_card.get_width() < app.chat_scroll.get_width() - 12
+                actions = assistant_card.get_last_child()
+                assert actions.get_first_child().get_height() < 30, 'Reply actions should remain subtle'
+                assert not app.composer_heading.get_visible()
+                assert app.prompt_placeholder.get_visible()
                 paintable = Gtk.WidgetPaintable.new(app.window)
                 snapshot = Gtk.Snapshot()
                 paintable.snapshot(snapshot, app.window.get_width(), app.window.get_height())
@@ -205,6 +218,14 @@ def main():
             app.theme_switch.set_active(True)
             assert json.loads(app.preferences_path.read_text())['dark'] is True
             assert app.window.has_css_class('dark')
+            app.tasks = [task]
+            app.selected = task['id']
+            app.show_task(task)
+            app.message_archive = {}
+            app.message_signature = None
+            app.render_messages(sample_conversation)
+            app.jump_to_latest()
+            settle()
             for page in ('workspace','models','accounts'):
                 app.stack.set_visible_child_name(page)
                 settle()

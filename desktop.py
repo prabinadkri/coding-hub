@@ -13,7 +13,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import webbrowser
 
 import dashboard
 import hub
@@ -44,10 +43,36 @@ def ensure_server(port=8765):
     raise RuntimeError("The dashboard could not start. Check " + str(directory / "server.log"))
 
 
+def prepare_browser_environment():
+    """Include desktop registrations omitted by minimal SSH launch environments."""
+    existing = os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share').split(':')
+    candidates = [Path.home()/'.local/share/flatpak/exports/share',
+                  Path('/var/lib/flatpak/exports/share'), Path('/var/lib/snapd/desktop')]
+    additions = [str(path) for path in candidates if path.is_dir() and str(path) not in existing]
+    os.environ['XDG_DATA_DIRS'] = ':'.join(existing + additions)
+
+
+def launch_browser(Gtk, Gdk, Gio, parent, url, finished):
+    """Launch through the desktop session and report asynchronous failure."""
+    if hasattr(Gtk, 'UriLauncher'):
+        launcher = Gtk.UriLauncher.new(url)
+        def complete(source, result, *_):
+            try: finished(bool(source.launch_finish(result)), None)
+            except Exception as error: finished(False, str(error))
+        launcher.launch(parent, None, complete)
+    else:
+        context = Gdk.Display.get_default().get_app_launch_context()
+        def complete(source, result, *_):
+            try: finished(bool(Gio.AppInfo.launch_default_for_uri_finish(result)), None)
+            except Exception as error: finished(False, str(error))
+        Gio.AppInfo.launch_default_for_uri_async(url, context, None, complete)
+
+
 def launch(port=8765):
     if not sys.platform.startswith("linux"):
         print("The native app requires Linux. Opening the browser interface on this platform.")
         return dashboard.serve(port)
+    prepare_browser_environment()
     try:
         import gi
         gi.require_version("Gtk", "4.0")
@@ -81,7 +106,7 @@ def launch(port=8765):
     return application.run([])
 
 
-def create_application(Gtk, Gdk, Gio, GLib, api, url):
+def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
     """Build native widgets independently of transport for isolated UI validation."""
     from gi.repository import Pango
     routes = ("auto", "antigravity", "free", "local", "smart", "claude", "openai")
@@ -191,7 +216,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.connection = self.label('Connecting…', 'muted')
             self.connection.set_wrap(False)
             header.pack_start(self.connection)
-            header.pack_end(self.button('Open web ↗', lambda *_: webbrowser.open(url)))
+            self.open_web_button = self.button('Open web ↗', self.open_web)
+            header.pack_end(self.open_web_button)
             self.theme_switch = Gtk.Switch(valign=Gtk.Align.CENTER)
             self.theme_switch.set_tooltip_text('Dark mode')
             theme_row = self.row(7)
@@ -284,7 +310,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             project_row.append(self.browse_button)
             self.project_card.append(project_row)
             body.append(self.project_card)
-            self.chat_messages = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            self.chat_messages = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
             self.chat_scroll = Gtk.ScrolledWindow(min_content_height=120, vexpand=True)
             self.chat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             self.chat_scroll.set_child(self.chat_messages)
@@ -302,6 +328,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.composer = composer
             self.composer_title = self.label('Your message', 'section-title')
             composer_heading = self.row()
+            self.composer_heading = composer_heading
             self.composer_title.set_hexpand(True)
             composer_heading.append(self.composer_title)
             composer_heading.append(self.label('Ctrl+Enter to send', 'muted'))
@@ -314,7 +341,17 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             prompt_scroll = self.prompt_scroll
             prompt_scroll.add_css_class('input-frame')
             prompt_scroll.set_child(self.prompt)
-            composer.append(prompt_scroll)
+            overlay = Gtk.Overlay()
+            overlay.set_child(prompt_scroll)
+            self.prompt_placeholder = self.label('Describe what you want to build, fix, or understand…', 'prompt-placeholder')
+            self.prompt_placeholder.set_halign(Gtk.Align.START)
+            self.prompt_placeholder.set_valign(Gtk.Align.START)
+            self.prompt_placeholder.set_margin_start(13)
+            self.prompt_placeholder.set_margin_top(12)
+            self.prompt_placeholder.set_can_target(False)
+            overlay.add_overlay(self.prompt_placeholder)
+            self.prompt.get_buffer().connect('changed', lambda buffer: self.prompt_placeholder.set_visible(buffer.get_char_count() == 0))
+            composer.append(overlay)
             options = self.row()
             route_label = self.label('Route', 'muted')
             route_label.set_wrap(False)
@@ -347,7 +384,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             footer.append(Gtk.Box(hexpand=True))
             self.stop_button = self.button('Stop task', self.stop, 'danger')
             self.stop_button.set_sensitive(False)
-            self.run_button = self.button('Send message  →', self.run_task, 'primary')
+            self.stop_button.set_visible(False)
+            self.run_button = self.button('Send  ↑', self.run_task, 'primary')
             footer.append(self.stop_button)
             footer.append(self.run_button)
             composer.append(footer)
@@ -478,6 +516,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             self.project.set_editable(not existing)
             self.browse_button.set_sensitive(not existing)
             self.composer_title.set_text('Reply' if existing else 'Your message')
+            self.composer_heading.set_visible(not existing)
+            self.prompt_placeholder.set_text('Continue the conversation…' if existing else 'Describe what you want to build, fix, or understand…')
+            self.activity.set_visible(not existing)
             self.prompt_scroll.set_min_content_height(48 if existing else 72)
             self.chat_footnote.set_visible(not existing)
             if self.chat_layout != existing:
@@ -669,6 +710,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
             elapsed = int((task.get("ended_at") or time.time()) - (task.get("started_at") or task["created_at"]))
             self.activity.set_text(f"{task['status'].capitalize()} · {elapsed // 60}m {elapsed % 60}s · {task['backend']} · {task['project']}")
             self.stop_button.set_sensitive(task["status"] in ("queued", "running"))
+            self.stop_button.set_visible(task['status'] in dashboard.ACTIVE)
+            self.output_details.set_label('Task activity · ' + task['status'].replace('_', ' ').capitalize() + ' · ' + str(elapsed // 60) + 'm ' + str(elapsed % 60) + 's')
             output = task.get("output", "")
             if output != self.last_output:
                 self.last_output = output
@@ -811,18 +854,22 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                 user = role == 'You'
                 row = self.row(0)
                 row.add_css_class('message-row')
+                row.set_hexpand(True)
                 card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-                card.set_halign(Gtk.Align.END if user else Gtk.Align.START)
+                card.set_halign(Gtk.Align.END if user else Gtk.Align.FILL)
+                card.set_hexpand(not user)
                 card.add_css_class('user-message' if user else 'assistant-message')
                 speaker = self.label(role, 'chat-title')
                 speaker.set_xalign(1 if user else 0)
                 card.append(speaker)
-                for kind, value in ([('paragraph', text)] if user else blocks(text)):
+                for kind, value in ([('paragraph', text)] if user else blocks(text, with_languages=True)):
+                    language, value = value if kind == 'code' else ('', value)
                     content = self.label(value)
                     content.set_selectable(True)
-                    content.set_max_width_chars(56 if user else 72)
+                    content.set_max_width_chars(56 if user else -1)
+                    content.add_css_class('reply-text')
                     if not user and kind != 'code':
-                        content.set_markup(inline_markup(value))
+                        content.set_markup('<span line_height="1.5">' + inline_markup(value) + '</span>')
                     if kind == 'heading':
                         content.add_css_class('reply-heading')
                     if kind == 'code':
@@ -831,18 +878,28 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                         code_scroll = Gtk.ScrolledWindow(max_content_height=220, propagate_natural_height=True)
                         code_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
                         code_scroll.set_child(content)
-                        card.append(code_scroll)
+                        code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                        code_box.add_css_class('reply-code-frame')
+                        code_heading = self.row(12)
+                        code_heading.add_css_class('reply-code-heading')
+                        code_title = self.label(language or 'Code', 'footnote')
+                        code_title.set_hexpand(True)
+                        code_heading.append(code_title)
+                        code_heading.append(self.message_action('Copy', 'edit-copy-symbolic', lambda *_, code=value: Gdk.Display.get_default().get_clipboard().set(code)))
+                        code_box.append(code_heading)
+                        code_box.append(code_scroll)
+                        card.append(code_box)
                     else:
                         card.append(content)
                 if not user and turn:
                     actions = self.row(12)
-                    actions.append(self.button('Copy reply', lambda *_: Gdk.Display.get_default().get_clipboard().set(text)))
+                    actions.append(self.message_action('Copy reply', 'edit-copy-symbolic', lambda *_: Gdk.Display.get_default().get_clipboard().set(text)))
                     if turn.get('has_review'):
-                        actions.append(self.button('View changes', lambda *_, task=turn['task']: self.open_changes(task)))
+                        actions.append(self.message_action('View changes', 'document-edit-symbolic', lambda *_, task=turn['task']: self.open_changes(task)))
                     card.append(actions)
                 if status and status != 'completed':
                     card.append(self.label(status.replace('_', ' ').capitalize(), 'footnote'))
-                gutter = Gtk.Box(hexpand=True, width_request=65)
+                gutter = Gtk.Box(hexpand=user, width_request=65 if user else 20)
                 if user:
                     row.append(gutter)
                 row.append(card)
@@ -870,6 +927,34 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url):
                     self.chat_scrolled(adjustment)
                     return False
                 GLib.idle_add(preserve_position, priority=GLib.PRIORITY_LOW)
+
+        def message_action(self, text, icon, callback):
+            button = self.button('', callback, 'message-action')
+            row = self.row(5)
+            picture = Gtk.Image.new_from_icon_name(icon)
+            picture.set_pixel_size(12)
+            row.append(picture)
+            title = self.label(text)
+            title.set_wrap(False)
+            row.append(title)
+            button.set_child(row)
+            button.set_tooltip_text(text)
+            return button
+
+        def open_web(self, *_):
+            self.open_web_button.set_sensitive(False)
+            self.open_web_button.set_label('Opening…')
+            def finished(ok, error):
+                if self.closed_window: return
+                self.open_web_button.set_sensitive(True)
+                self.open_web_button.set_label('Open web ↗')
+                if not ok:
+                    self.error.set_text('Could not open your browser. Check the default web browser in Linux Settings → Default Apps, then try again.' + (' ' + str(error)[:180] if error else ''))
+                    self.error.set_visible(True)
+            try:
+                (browser_launcher or launch_browser)(Gtk, Gdk, Gio, self.window, url, finished)
+            except Exception as error:
+                finished(False, str(error))
 
         def open_changes(self, task):
             project = self.conversation_project

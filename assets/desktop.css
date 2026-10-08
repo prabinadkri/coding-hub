@@ -97,3 +97,22 @@ window.dark { background: #151d1a; color: #e1e9e3; }
 .assistant-message, .dark .assistant-message { background: transparent; border: none; padding: 14px 8px; }
 .review-code { font-size: 12px; padding: 12px; }
 .dark .review-code text { background: #131e17; color: #e1e9e3; }
+
+/* Match the browser's quiet conversation controls and wide reading area. */
+.conversation-page .composer { padding: 10px 14px; border-radius: 16px; }
+.conversation-page .message-row { padding: 6px 0; }
+.reply-text { font-size: 14px; }
+.assistant-message .chat-title { color: #607b5c; font-size: 11px; }
+.dark .assistant-message .chat-title { color: #b2cba3; }
+.user-message { padding: 14px 18px; border-radius: 18px 18px 4px 18px; }
+.message-action, .dark .message-action { min-height: 0; min-width: 0; padding: 3px 4px; border: none; border-radius: 4px; box-shadow: none; background: transparent; color: #74826f; font-size: 11px; font-weight: 400; }
+.message-action:hover { background: #eaf0e5; color: #365538; }
+.dark .message-action { color: #9daf9e; }
+.dark .message-action:hover { background: #263b2b; color: #d6e8cf; }
+.reply-code-frame { border: 1px solid #dce6d6; border-radius: 10px; margin-top: 4px; margin-bottom: 4px; }
+.reply-code-heading { background: #edf3e8; padding: 5px 12px; border-radius: 9px 9px 0 0; }
+.reply-code-frame .reply-code { padding: 14px; border-radius: 0 0 9px 9px; font-size: 12px; }
+.dark .reply-code-frame { border-color: #354b39; }
+.dark .reply-code-heading { background: #293d2c; }
+.prompt-placeholder { color: #879381; font-size: 13px; }
+.dark .prompt-placeholder { color: #99aa99; }
