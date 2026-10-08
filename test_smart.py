@@ -124,6 +124,13 @@ class SmartTests(unittest.TestCase):
         self.assertNotIn('All tests passed!', receipt)
         self.assertLess(len(receipt.encode()), 3600)
 
+    def test_detailed_review_is_accepted_but_unbounded_or_invalid_output_is_rejected(self):
+        review = {'verdict': 'pass', 'summary': 'Evidence detail. ' * 60, 'next_steps': ''}
+        self.assertEqual(smart.validate_response(review, smart.REVIEW_SCHEMA), review)
+        for invalid in (dict(review, summary='x' * 2001), dict(review, verdict='maybe'),
+                        dict(review, next_steps=[]), dict(review, extra='unexpected')):
+            with self.assertRaises(ValueError): smart.validate_response(invalid, smart.REVIEW_SCHEMA)
+
 
 if __name__ == '__main__':
     unittest.main()

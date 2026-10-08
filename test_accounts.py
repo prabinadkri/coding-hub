@@ -77,9 +77,19 @@ class AccountTests(unittest.TestCase):
 
     def test_model_selection_is_explicit_and_never_shell_input(self):
         with self.assertRaises(ValueError): hub.validate_model('openai', None)
-        for backend, model in [('auto','gpt-x'),('smart','gpt-x'),('openai','x;echo SECRET'),('claude','--flag')]:
+        for backend, model in [('auto','gpt-x'),('smart','x;echo SECRET'),('openai','x;echo SECRET'),('claude','--flag')]:
             with self.assertRaises(ValueError): hub.validate_model(backend,model)
         self.assertEqual(hub.validate_model('antigravity','claude-sonnet-4-6'),'claude-sonnet-4-6')
+        self.assertEqual(hub.validate_model('smart','claude-sonnet-4-6'),'claude-sonnet-4-6')
+
+    def test_smart_uses_the_entire_live_antigravity_catalog(self):
+        catalog = [{'id': mid, 'name': mid} for mid in ('claude-opus-4-6-thinking', 'claude-sonnet-4-6',
+            'gemini-3.1-pro-high', 'gemini-3.1-pro-low', 'gemini-3.8-flash-high',
+            'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gpt-oss-120b-medium', 'future-account-model')]
+        with patch.object(accounts, 'model_catalog', return_value={'antigravity': catalog}):
+            self.assertEqual(hub.model_choices('smart'), catalog)
+            for choice in catalog:
+                self.assertEqual(hub.validate_model('smart', choice['id']), choice['id'])
 
     def test_credential_listing_exposes_only_status(self):
         with patch.object(hub,'executable',return_value='cli'), patch.object(accounts.subprocess,'run',side_effect=[

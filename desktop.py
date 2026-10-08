@@ -406,6 +406,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.model_picker.connect('notify::selected', self.model_changed)
             self.model_row.append(self.model_picker)
             settings_body.append(self.model_row)
+            self.workers_row = self.row()
+            self.workers_row.append(self.label('Cloud workers', 'muted'))
+            self.workers_picker = Gtk.DropDown.new_from_strings(['1 · Sequential', '2 · Parallel', '3 · Parallel'])
+            self.workers_picker.set_tooltip_text('Maximum independent assignments for this task. Local Ollama always runs one worker at a time.')
+            self.workers_row.append(self.workers_picker)
+            settings_body.append(self.workers_row)
             self.hint = self.label('', 'muted')
             settings_body.append(self.hint)
             self.chat_settings = Gtk.Expander(label='Chat settings', expanded=True)
@@ -455,6 +461,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 if draft.get('model'):
                     self.chosen_models[draft.get('backend')] = draft['model']
                 self.quality.set_selected(1 if draft.get("quality") == "deep" else 0)
+                self.workers_picker.set_selected(max(0, min(2, int(draft.get('workers', 1)) - 1)))
                 self.edits.set_active(draft.get("mode") == "build")
             except (OSError, ValueError, TypeError):
                 self.project.set_text(str(Path.home() / "Documents"))
@@ -568,7 +575,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     "prompt": buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True),
                     "backend": routes[self.route.get_selected()],
                     "quality": "deep" if self.quality.get_selected() == 1 else "fast",
-                    "model": self.chosen_models.get(routes[self.route.get_selected()]) if routes[self.route.get_selected()] in ('antigravity', 'claude', 'openai', 'free', 'local') else None,
+                    "model": self.chosen_models.get(routes[self.route.get_selected()]) if routes[self.route.get_selected()] in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart') else None,
+                    "workers": self.workers_picker.get_selected() + 1 if routes[self.route.get_selected()] == 'smart' else 1,
                     "mode": "build" if self.edits.get_active() else "analysis", "conversation": self.conversation}
 
         def current_project(self):
@@ -621,7 +629,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     "Uses your Google sign-in. Fast selects Flash; Deep selects Pro. Provider quotas apply.",
                     "Checks current zero-cost pricing before each run. Provider quotas apply.",
                     "Qwen3 8B runs on this computer with 16K context. Best for focused tasks.",
-                    "Antigravity plans and reviews; free/local workers implement. At most 2 manager calls. Savings and equal quality are not guaranteed; 6,000-byte request limit.",
+                    "Choose your manager model and up to 3 cloud workers for this same task. Independent project assignments run in separate copies, then are integrated and checked. Local fallback stays serial. At most 2 bounded manager calls; savings are not guaranteed.",
                     "Uses your separate Claude subscription through its official CLI. Connect in Accounts first; your plan's limits apply.",
                     "Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model; availability depends on your plan."
                 ][selected])
@@ -630,13 +638,16 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def render_model_picker(self):
             route = routes[self.route.get_selected()]
-            choices = self.model_choices.get(route, [])
+            choices = self.model_choices.get('antigravity' if route == 'smart' else route, [])
             selected = self.chosen_models.get(route)
             if selected and not any(m['id'] == selected for m in choices):
                 choices = [{'id': selected, 'name': selected}] + choices
             keys = [None] + [m['id'] for m in choices]
             signature = (route, keys)
-            self.model_row.set_visible(route in ('antigravity', 'claude', 'openai', 'free', 'local'))
+            self.model_row.set_visible(route in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart'))
+            self.model_row.get_first_child().set_text('Manager model' if route == 'smart' else 'Model')
+            self.workers_row.set_visible(route == 'smart')
+            self.quality.set_sensitive(route in ('auto', 'antigravity', 'smart') and not selected)
             if signature == self.model_signature:
                 return
             self.model_signature = signature
@@ -652,6 +663,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             selected = self.model_picker.get_selected()
             if selected < len(self.model_keys):
                 self.chosen_models[routes[self.route.get_selected()]] = self.model_keys[selected]
+                self.render_model_picker()
 
         def browse(self, *_):
             dialog = Gtk.FileChooserNative.new("Choose a project", self.window,

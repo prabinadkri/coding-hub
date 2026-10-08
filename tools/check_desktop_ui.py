@@ -31,7 +31,13 @@ def main():
               'models': [hub.LOCAL_AGENT_MODEL, 'qwen3:8b'], 'free_models': list(hub.FREE_MODELS), 'local_ready': True, 'local_model': hub.LOCAL_AGENT_MODEL,
               'gpu': {'name': 'NVIDIA GeForce GTX 1650', 'used_mb': 128, 'total_mb': 4096, 'utilization': 17},
               'cpu': 24.5, 'sampled_at': now, 'accounts': [{'id': p, 'installed': True} for p in ('antigravity','claude','openai')],
-              'provider_models': {'claude': [{'id':'sonnet','name':'Claude Sonnet'}]},
+              'provider_models': {'antigravity': [
+                  {'id':'claude-manager','name':'Claude Sonnet manager'},
+                  {'id':'gemini-manager','name':'Gemini Flash manager'},
+                  {'id':'claude-opus-4-6-thinking','name':'Claude Opus 4.6 Thinking'},
+                  {'id':'gemini-3.1-pro-high','name':'Gemini 3.1 Pro High'},
+                  {'id':'gpt-oss-120b-medium','name':'GPT-OSS 120B Medium'}],
+                  'claude': [{'id':'sonnet','name':'Claude Sonnet'}]},
               'ram': {'available_gb': 10.9, 'total_gb': 15.3}, 'loaded': [],
               'quota': {'checked_at': now, 'groups': [
                   {'name': 'Gemini Models', 'buckets': [{'remaining_percent': 82.5, 'reset_at': now + 90000}]},
@@ -185,7 +191,24 @@ def main():
             app.route.set_selected(3)
             app.model_picker.set_selected(2)
             assert app.form()['model'] == 'qwen3:8b'
+            app.route.set_selected(4)
+            assert app.model_row.get_visible() and app.workers_row.get_visible()
+            assert app.model_row.get_first_child().get_text() == 'Manager model'
+            assert 'claude-opus-4-6-thinking' in app.model_keys
+            assert 'gemini-3.1-pro-high' in app.model_keys and 'gpt-oss-120b-medium' in app.model_keys
+            app.model_picker.set_selected(app.model_keys.index('claude-opus-4-6-thinking'))
+            assert app.form()['model'] == 'claude-opus-4-6-thinking'
+            assert not app.quality.get_sensitive()
+            app.model_picker.set_selected(1)
+            app.workers_picker.set_selected(1)
+            assert app.form()['model'] == 'claude-manager'
+            assert app.form()['workers'] == 2
+            app.save_draft()
+            saved_draft = json.loads(app.draft_path.read_text())
+            assert saved_draft['workers'] == 2 and saved_draft['model'] == 'claude-manager'
             app.route.set_selected(0)
+            assert not app.workers_row.get_visible()
+            assert app.form()['workers'] == 1
             assert app.form()['model'] is None
             app.project.set_text('/workspace/other-project')
             assert app.form()['project'] == project, 'A follow-up must keep its conversation project'

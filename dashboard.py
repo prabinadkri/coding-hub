@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree
 
-VERSION = "2.7.1"
+VERSION = "2.8.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -39,14 +39,20 @@ def task_progress(task, output=''):
     if state == 'stopping': return {'label':'Stopping…', 'detail':'Waiting for the agent to stop safely'}
     if state not in ACTIVE: return {'label':str(state or 'Ready').replace('_',' ').capitalize(), 'detail':'Task ended'}
     label, detail = 'Thinking / waiting for model…', 'Waiting for the next agent update'
+    integrating = False
     names = {'read':'Read file', 'glob':'Find files', 'grep':'Search source', 'edit':'Edit file', 'write':'Write file', 'bash':'Run command'}
     for line in output.splitlines():
         if line.startswith('[Smart 1]'):
             label, detail = 'Planning…', 'Antigravity is preparing the worker plan'
         elif line.startswith('[Smart review]'):
             label, detail = 'Reviewing changes…', 'Antigravity is checking the worker’s evidence'
+        elif line.startswith('[Smart parallel]') or re.match(r'^\[Smart worker \d+/\d+\]', line):
+            label, detail = 'Workers running in parallel…', line.split(']', 1)[-1].strip()[:150]
+        elif line.startswith('[Smart integration]'):
+            integrating = True
+            label, detail = 'Integrating and checking…', line.split(']', 1)[-1].strip()[:150]
         elif line.startswith('[Smart worker]') or re.match(r'^\[\d+\]',line):
-            label, detail = 'Thinking / waiting for model…', line.split(']',1)[-1].strip()[:120]
+            label, detail = 'Integrating and checking…' if integrating else 'Thinking / waiting for model…', line.split(']',1)[-1].strip()[:120]
         elif line.startswith('[tool] '):
             match = re.match(r'\[tool\] ([\w-]+) · (\w+)', line)
             if match:
@@ -86,6 +92,8 @@ class TaskManager:
             args.extend(["--conversation", task["conversation"]])
         if task.get('model'):
             args.extend(['--model', task['model']])
+        if task.get('backend') == 'smart':
+            args.extend(['--workers', str(task.get('workers', 1))])
         return args + ["--", task["prompt"]]
 
     def persist(self, task):
@@ -129,6 +137,7 @@ class TaskManager:
         if backend not in ("auto", "smart", "antigravity", "free", "local", "claude", "openai") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
             raise ValueError("Choose a valid route, quality and task mode.")
         model = hub.validate_model(backend, data.get('model'))
+        workers = hub.validate_workers(backend, data.get('workers', 1))
         if backend == "smart" and len(prompt.encode()) > 6000:
             raise ValueError("Smart requests are limited to 6,000 UTF-8 bytes. Split the task or choose a direct route.")
         with self.lock, hub.project_lock(project):
@@ -139,7 +148,7 @@ class TaskManager:
             task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project), "scope": "general" if hub.is_general(project) else "project",
                     "conversation": conversation,
                     "backend": backend, "quality": quality, "mode": mode, "created_at": time.time(),
-                    "model": model,
+                    "model": model, "workers": workers,
                     "started_at": None, "ended_at": None, "status": "queued", "exit_code": None}
             self.tasks[task["id"]] = task
             self.persist(task)

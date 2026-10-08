@@ -77,6 +77,16 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(self.request(endpoint, token='')[0], 401)
         self.assertEqual(self.request('/api/conversation/delete', {}, token='')[0], 401)
 
+    def test_smart_manager_and_worker_choices_reach_the_task_command(self):
+        code, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Build the app', 'backend': 'smart', 'model': 'claude-opus-4-6-thinking', 'workers': 2})
+        self.assertEqual(code, 201)
+        self.wait_task(task['id'])
+        command = self.manager.command(task)
+        self.assertEqual(command[command.index('--model') + 1], 'claude-opus-4-6-thinking')
+        self.assertEqual(command[command.index('--workers') + 1], '2')
+        self.assertEqual(task['workers'], 2)
+        self.assertEqual(self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Build', 'backend': 'smart', 'workers': 9})[0], 400)
+
     def test_delete_endpoint_removes_history_and_rejects_active_chat(self):
         code, task = self.request('/api/tasks', {'project': str(self.project), 'prompt': 'Disposable chat'})
         self.assertEqual(code, 201)
@@ -117,6 +127,8 @@ class DashboardTests(unittest.TestCase):
         reviewing = dashboard.task_progress(task, '[tool] write · completed\n[Smart review] Antigravity manager · bounded evidence review')
         self.assertEqual(reviewing['label'], 'Reviewing changes…')
         self.assertEqual(dashboard.task_progress({'status':'stopping'})['label'], 'Stopping…')
+        self.assertIn('parallel', dashboard.task_progress(task, '[Smart worker 1/2] Finished')['label'])
+        self.assertIn('Integrating', dashboard.task_progress(task, '[Smart integration] Combined edits\n[Smart worker] free → worker')['label'])
 
     def test_general_task_needs_no_project_and_cannot_mix_project_chats(self):
         code, task = self.request('/api/tasks', {'scope':'general','prompt':'Explain Linux memory'})

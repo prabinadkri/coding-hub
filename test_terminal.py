@@ -15,6 +15,17 @@ import terminal_ui
 
 
 class TerminalTests(unittest.TestCase):
+    def test_smart_model_and_workers_commands_apply_to_the_same_conversation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / 'project'; project.mkdir()
+            commands = iter(['/route smart', '/model claude-manager', '/workers 2', 'Build a system', 'Add tests', '/quit'])
+            with patch.object(hub, 'STATE', Path(temporary) / 'state'), patch('builtins.input', side_effect=lambda _: next(commands)), patch.object(hub, 'run_task', return_value=0) as run, contextlib.redirect_stdout(io.StringIO()):
+                hub.chat(project)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.kwargs['model'], 'claude-manager')
+            self.assertEqual(run.call_args.kwargs['workers'], 2)
+            self.assertEqual(run.call_args_list[0].kwargs['conversation'], run.call_args_list[1].kwargs['conversation'])
+
     def test_delete_requires_confirmation_then_starts_a_fresh_chat(self):
         from context_engine import ProjectMemory
         with tempfile.TemporaryDirectory() as temporary:

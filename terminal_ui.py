@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-COMMANDS = ('/help', '/models', '/model', '/route', '/edit', '/paste', '/new', '/delete', '/memory', '/changes', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
+COMMANDS = ('/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/memory', '/changes', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
 
 
 def interactive():
@@ -41,7 +41,7 @@ def help_text():
     print('\n' + style('Conversation'))
     print('  /new              New chat in the current workspace\n  /delete           Delete the current chat after confirmation\n  /general          Standalone chat without a project\n  /project PATH     Switch to a project folder\n  /paste            Multiline message; finish with a single .\n  /quit             Leave the chat')
     print('\n' + style('Agent'))
-    print('  /route NAME       auto, smart, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model; use default to reset\n  /mode analysis|build  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
+    print('  /route NAME       auto, smart, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model (Smart: Antigravity manager)\n  /workers 1|2|3    Smart maximum cloud workers; local stays serial\n  /mode analysis|build  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
     print('\n' + style('Project'))
     print('  /changes          Review the latest task diff\n  /memory           Shared instructions and index coverage\n  /status           Project, route, model, and edit mode\n  /doctor           Check Linux; include report in your next message')
     print(style('\n  Existing :commands work too. Use codehub quota for usage details.', '2'))

@@ -37,7 +37,7 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 
 1. Open **Coding Hub** from Applications. Pin that entry to your dock if desired. Its desktop ID and icon match the running GTK window.
 2. Choose **New chat → General task** for questions, Linux commands, or standalone work—no folder required. Choose **Project task** or **New project** to select a project folder. Existing chats keep their original scope.
-3. Expand **Chat settings**. Select a route and then a model. Antigravity lists models available to your Google account, including any Claude/GPT options. Free cloud shows currently verified free models; Local shows installed Ollama models. Automatic and Smart select models for their stages.
+3. Expand **Chat settings**. Select a route and then a model. Antigravity lists models available to your Google account, including any Claude/GPT options. Free cloud shows currently verified free models; Local shows installed Ollama models. Smart lets you choose its Antigravity manager model and up to three cloud workers; Automatic selects its route models.
 4. Leave **Allow edits & commands** off for explanations. Enable it to let the agent modify project files and run commands.
 5. An animated indicator shows observed activity, such as planning, a tool action, waiting for the model, or review, with elapsed time. **Stop task** remains beside Send. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
 6. Replies format headings, lists, inline code, and code blocks. Replies span the reading area, with small copy/review actions beneath them and language labels on code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
@@ -92,6 +92,7 @@ Inside `codehub chat`:
 - `/help` shows grouped commands; Tab completes command names. Arrow keys edit the current input.
 - `/paste` accepts a multiline message. Finish with a single `.` on its own line; `/cancel` discards it.
 - `/models` lists choices; `/model MODEL_ID` selects one; `/model default` restores the default.
+- `/workers 1`, `/workers 2`, or `/workers 3` sets the Smart maximum cloud workers for the same task. Local fallback remains one at a time. `/models` and `/model ID` on Smart select the Antigravity manager, including account-available Claude and Gemini models.
 - `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic and Smart are supported too.
 - `/project /path/to/folder` starts a project conversation; `/general` returns to standalone tasks.
 - `/mode analysis` explains only; `/mode build` enables commands and requested changes.
@@ -185,18 +186,24 @@ Choose **Smart** in the app or browser, or run:
 
 ```bash
 codehub chat --backend smart --project ~/my-project --apply
-codehub run --backend smart --quality deep --project ~/my-project --apply "Fix checkout validation and run its tests"
+codehub run --backend smart --model claude-sonnet-4-6 --workers 2 --project ~/my-project --apply "Build the frontend and backend for this system"
 ```
 
-Antigravity creates a concise plan; an OpenCode worker implements it using a currently verified free model, falling back to local Qwen if needed. Antigravity then reviews the worker's report, observed command results and exit codes, and focused source/diff evidence. Short analysis requests skip the planning call. **Fast** uses Flash as manager; **Deep** uses Pro.
+Choose **Smart → Manager model** in Chat settings, or use `/model MODEL_ID` / `--model MODEL_ID` in the CLI. Choices come from your Antigravity account's current model catalog, including its available Claude, Gemini, and other models. A selected model is used for both planning and review; it never silently switches to a worker model. With **Use route default**, Fast uses Flash and Deep uses Pro. Separate Claude/ChatGPT subscriptions remain direct routes.
 
-Each task has a limit of two manager invocations, bounded context excerpts, a short output schema, and a two-minute timeout per manager invocation. Manager calls use a dedicated custom agent with no coding or delegation tools, in a separate private directory to avoid automatic project discovery. Its JSON response is validated by the hub. The native CLI still adds its own prompt and tool overhead; these controls are not a hard token cap. Requests are limited to 6,000 UTF-8 bytes. Free online workers have provider quotas; local Qwen has no provider quota and uses your hardware.
+Choose **Cloud workers: 1, 2, or 3**. This is one request in one chat: for example, the manager can assign frontend files to one worker and backend files to another, with a shared API contract. Workers use distinct currently verified free models. Each receives a private copy of eligible project source, including uncommitted files. Their allowed file lists must be disjoint. After they finish, Coding Hub checks file ownership and checks that the originals have not changed, combines the edits, and runs a free/local integration worker to check interfaces, run tests, and fix integration issues. The manager then reviews bounded reports and observed evidence. The normal **View changes** action shows the final changes in your project.
+
+The count is a maximum, not a demand to split every task. General/system tasks and analysis stay sequential. Unsafe/overlapping plans, insufficient free models, linked source, or copies exceeding 20,000 files / 128 MiB fall back to one worker. Dependencies, secrets, dotfiles, and generated folders are not copied. Worker copies are a conflict-prevention mechanism, not an OS security sandbox. Failed or conflicting assignments remain in the private task folder for inspection without being integrated; successful copies are removed. Free cloud failures can fall back to local Ollama, with only one local worker running at a time within the task. Provider quotas still apply; more workers are not unlimited free capacity. Stop cancels the worker processes as well as later stages.
+
+Each task has a limit of two manager invocations, an 18,000-byte supplied prompt limit per invocation (including its response schema), bounded combined evidence that does not grow with worker count, and a two-minute timeout per invocation. Short sequential analysis requests skip planning. Manager calls use a tool-free custom agent in a separate private directory to avoid automatic project discovery. Responses are schema-validated. The provider CLI adds its own prompt and reasoning overhead and exposes no hard total-token limit; the byte limit is not a token cap. Requests are limited to 6,000 UTF-8 bytes.
 
 A rejected review stops with **Needs review**, preserves the worker's changes, and gives next steps. No recursive manager repair loop or automatic direct-Antigravity implementation is started. Provider failure and unavailable reviews remain incomplete. Stop cancels further work.
 
 The result shows the provider-reported manager token total; the full breakdown is saved privately in the task's `smart.json`. Missing usage is shown as unavailable. Direct Antigravity is not run again merely to measure a baseline. **Lower token usage and equal quality cannot be guaranteed for every task.** Two native manager calls can cost more than a quick direct answer. Smart is intended for focused implementation where workers can handle most exploration and coding. Its review sees partial evidence, not the complete repository or an independent execution of every test. Review the actual changes and validation output.
 
 In one paired checkout-validation test, Smart used **8,171 reported Antigravity tokens** versus **122,733** for direct Antigravity, about **93.3% less**. Both passed the same eight independent acceptance checks. This small example is not a general quality or savings guarantee; worker tokens are excluded from this Antigravity-only comparison. See [the benchmark details](docs/smart-benchmark.md).
+
+A second frontend/backend check with Sonnet and two parallel workers used **10,316 reported manager tokens** versus **15,587** for direct Sonnet (**33.8% less**); both passed nine independent checks. This development run exposed response-length validation issues, now covered by regression tests. The benchmark notes disclose the reused plan, revalidated review, discarded attempt, and separately reported cache reads.
 
 ## Delete a chat
 
@@ -299,7 +306,7 @@ python3 -m unittest discover -p 'test_*.py' -v
 python3 hub.py web
 ```
 
-The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, Smart call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all six pages and existing conversations at two window widths, plus dark-mode previews. It checks chat deletion and cancellation, Ctrl+Enter, scroll following, reading-position preservation, compact composer size, model selection, temporary sign-in controls, theme persistence, message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
+The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, isolated parallel assignments and integration conflicts, serialized local fallback and cancellation, Smart model selection and call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all six pages and existing conversations at two window widths, plus dark-mode previews. It checks chat deletion and cancellation, Ctrl+Enter, scroll following, reading-position preservation, compact composer size, model selection, temporary sign-in controls, theme persistence, message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
 
 To run that Linux UI check (requires GTK 4, PyGObject, Xvfb, and a session bus):
 

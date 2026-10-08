@@ -287,11 +287,11 @@ def classify_failure(code, text, structured_error=False):
     return "error"
 
 
-def run_process(args, cwd, env, log, timeout=1200, render_reply=True):
+def run_process(args, cwd, env, log, timeout=1200, render_reply=True, cancel_event=None, quiet=False):
     cwd = Path(cwd).resolve()
     error_event = False
     chunks = []
-    terminal = terminal_ui.interactive()
+    terminal = terminal_ui.interactive() and not quiet
     progress_label = "Thinking / waiting for model"
     stopped = threading.Event()
     started = time.monotonic()
@@ -309,11 +309,12 @@ def run_process(args, cwd, env, log, timeout=1200, render_reply=True):
 
     def ticker():
         frame = 0
-        while not stopped.wait(min(.12 if terminal else 15, timeout)):
+        while not stopped.wait(min(.12 if terminal or cancel_event is not None else 15, timeout)):
             elapsed = int(time.monotonic() - started)
-            print(terminal_ui.progress_frame(progress_label, started, frame) if terminal else f"  working... {elapsed}s", end="" if terminal else "\n", flush=True)
+            if not quiet:
+                print(terminal_ui.progress_frame(progress_label, started, frame) if terminal else f"  working... {elapsed}s", end="" if terminal else "\n", flush=True)
             frame += 1
-            if elapsed >= timeout:
+            if elapsed >= timeout or (cancel_event is not None and cancel_event.is_set()):
                 stop_child()
                 try:
                     process.wait(timeout=5)
@@ -348,7 +349,7 @@ def run_process(args, cwd, env, log, timeout=1200, render_reply=True):
                             part = event.get('part', {})
                             tool_state = part.get('state', {}).get('status', 'running')
                             progress_label = (str(part.get('tool', 'Tool')).replace('_', ' ').capitalize() if tool_state in ('running','pending') else 'Thinking · ' + str(part.get('tool', 'tool')) + ' ' + tool_state)
-                    else:
+                    elif not quiet:
                         print(text.rstrip(), flush=True)
             code = process.wait()
         stopped.set()
@@ -360,6 +361,8 @@ def run_process(args, cwd, env, log, timeout=1200, render_reply=True):
                 if answer: terminal_reply(answer)
         if time.monotonic() - started >= timeout:
             code = 124
+        if cancel_event is not None and cancel_event.is_set():
+            code = 130
     except KeyboardInterrupt:
         stop_child()
         code = 130
@@ -439,8 +442,8 @@ def validate_model(backend, model):
         if backend == 'openai':
             raise ValueError('Choose a ChatGPT model in Chat settings before sending.')
         return None
-    if backend not in ('antigravity', 'openai', 'claude', 'free', 'local') or not isinstance(model, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}', model):
-        raise ValueError('Choose a valid model for this direct account route.')
+    if backend not in ('antigravity', 'openai', 'claude', 'free', 'local', 'smart') or not isinstance(model, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}', model):
+        raise ValueError('Choose a valid model for this route.')
     return model
 
 
@@ -449,8 +452,10 @@ def model_choices(backend):
         return [{'id': name, 'name': name} for name in local_models()]
     if backend == 'free':
         return [{'id': name, 'name': name} for name in refresh_free_models()]
-    if backend in ('auto', 'smart'):
+    if backend == 'auto':
         return []
+    if backend == 'smart':
+        backend = 'antigravity'
     import accounts
     return accounts.model_catalog().get(backend, [])
 
@@ -461,17 +466,26 @@ def show_models(backend):
     for choice in choices:
         print('  ' + choice['id'] + ('  ·  ' + choice['name'] if choice['id'] != choice['name'] else ''))
     if not choices:
-        print('  No model list available. Automatic and Smart select models for each stage.')
+        print('  Automatic chooses its route models.' if backend == 'auto' else '  Model catalog unavailable. Check provider sign-in and try again.')
     return choices
 
 
-def run_task(project, request, backend="auto", quality="fast", apply=False, dry_run=False, conversation=None, resume=False, model=None):
+def validate_workers(backend, workers):
+    if type(workers) is not int or not 1 <= workers <= 3:
+        raise ValueError('Choose 1, 2, or 3 Smart workers.')
+    if backend != 'smart' and workers != 1:
+        raise ValueError('Parallel workers are available only on the Smart route.')
+    return workers
+
+
+def run_task(project, request, backend="auto", quality="fast", apply=False, dry_run=False, conversation=None, resume=False, model=None, workers=1):
     project = Path(project).expanduser().resolve()
     if not project.is_dir():
         raise ValueError(f"Project directory does not exist: {project}")
     if not request.strip():
         raise ValueError("The task cannot be empty.")
     model = validate_model(backend, model)
+    workers = validate_workers(backend, workers)
     requested_model = model
     general = is_general(project)
     if backend in ('claude', 'openai'):
@@ -517,7 +531,7 @@ def run_task(project, request, backend="auto", quality="fast", apply=False, dry_
         output = ""
         if backend == "smart":
             from smart_route import execute
-            result = execute(project, request, quality, apply, context, folder)
+            result = execute(project, request, quality, apply, context, folder, model=model, workers=workers)
             record.update(status=result["status"], smart=result["report"])
             save_json(folder / "task.json", record)
             memory.record(conversation, task_id, request, result["output"], result["status"])
@@ -668,7 +682,7 @@ def menu():
             return 130
 
 
-def chat(project, backend="auto", quality="fast", apply=False, resume=False, model=None):
+def chat(project, backend="auto", quality="fast", apply=False, resume=False, model=None, workers=1):
     from context_engine import ProjectMemory
     memory = ProjectMemory(project)
     conversation = memory.conversation(resume=True) if resume else None
@@ -711,6 +725,13 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                 if name == '/help': terminal_ui.help_text(); continue
                 if name == '/status': terminal_ui.banner('General tasks' if is_general(memory.project) else memory.project, backend, model, apply); continue
                 if name == '/models': show_models(backend); continue
+                if name == '/workers':
+                    if backend != 'smart':
+                        print('Choose /route smart first.'); continue
+                    if not argument:
+                        print(f'Smart workers: up to {workers}. Use /workers 1, 2, or 3. Local inference stays serial.'); continue
+                    workers = validate_workers('smart', int(argument))
+                    print(f'Smart workers: up to {workers}; independent assignments in this same task.'); continue
                 if name == '/model':
                     if not argument: print('Use /model MODEL_ID or /model default.'); continue
                     model = validate_model(backend, None if argument == 'default' else argument)
@@ -773,7 +794,7 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                 if diagnostic_context:
                     request += '\n\nRead-only system snapshot:\n' + diagnostic_context
                     diagnostic_context = None
-                code = run_task(memory.project, request, backend, quality, apply, conversation=conversation, model=model)
+                code = run_task(memory.project, request, backend, quality, apply, conversation=conversation, model=model, workers=workers if backend == "smart" else 1)
                 if apply: print(terminal_ui.style('  /changes review files   /memory project instructions   /help commands', '2'))
                 if code == 130: print('Task canceled. You can continue this conversation.')
             except (EOFError, KeyboardInterrupt):
@@ -798,7 +819,7 @@ def main():
     changes.add_argument('--task', help='Task ID; defaults to the latest saved task')
     sub.add_parser("setup")
     models = sub.add_parser('models', help='List model choices for a route')
-    models.add_argument('--backend', choices=('antigravity','free','local','claude','openai'), default='local')
+    models.add_argument('--backend', choices=('antigravity','free','local','claude','openai','smart'), default='local')
     login = sub.add_parser('login', help='Open a provider’s own sign-in flow')
     login.add_argument('--provider', choices=('antigravity','claude','openai'), required=True)
     login.add_argument('--reconnect', action='store_true', help='Sign out of Antigravity first and reconnect')
@@ -825,7 +846,8 @@ def main():
         scope.add_argument('--general', action='store_true', help='Standalone task or Linux help; no project folder needed')
         item.add_argument("--backend", choices=(("auto", "antigravity", "free", "local") if name == "open" else ("auto", "smart", "antigravity", "free", "local", "claude", "openai")), default="auto")
         if name != 'open':
-            item.add_argument('--model', help='Optional direct account model ID; required for ChatGPT')
+            item.add_argument('--model', help='Direct model ID, or Antigravity manager model for Smart; required for ChatGPT')
+            item.add_argument('--workers', type=int, choices=(1, 2, 3), default=1, help='Smart maximum parallel cloud workers; local stays serial')
         item.add_argument("--quality", choices=("fast", "deep"), default="fast")
         if name == "run":
             item.add_argument("--apply", action="store_true", help="Allow project edits and shell execution for this task")
@@ -894,9 +916,9 @@ def main():
     if args.action == "setup":
         return subprocess.call([sys.executable, str(ROOT / "setup.py"), "--local"])
     if args.action == "run":
-        return run_task(args.project, args.task, args.backend, args.quality, args.apply, args.dry_run, args.conversation, args.resume, args.model)
+        return run_task(args.project, args.task, args.backend, args.quality, args.apply, args.dry_run, args.conversation, args.resume, args.model, args.workers)
     if args.action == "chat":
-        return chat(args.project, args.backend, args.quality, args.apply, args.resume, args.model)
+        return chat(args.project, args.backend, args.quality, args.apply, args.resume, args.model, args.workers)
     if args.action == "open":
         return open_agent(args.project, args.backend, args.quality)
     if args.action == 'menu':
