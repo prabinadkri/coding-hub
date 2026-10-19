@@ -15,18 +15,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -p 'test_*.py' -v
+      - run: node --check assets/app.js
   native-ui:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-4.0 xvfb xauth
-      - name: Validate native layouts and navigation
-        env:
-          GSK_RENDERER: cairo
-          GTK_A11Y: none
-        run: xvfb-run -a dbus-run-session -- /usr/bin/python3 tools/check_desktop_ui.py --output "$RUNNER_TEMP/coding-hub-ui"
-      - name: Validate saved sidebar on cold startup
-        env:
-          GSK_RENDERER: cairo
-          GTK_A11Y: none
-        run: xvfb-run -a dbus-run-session -- /usr/bin/python3 tools/check_startup_ui.py
+      - name: Validate native layouts, navigation, and saved sidebar startup
+        run: /usr/bin/python3 tools/check_all.py --gui-only --output "$RUNNER_TEMP/coding-hub-ui"

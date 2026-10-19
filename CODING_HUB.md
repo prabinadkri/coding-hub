@@ -21,6 +21,7 @@
 
 ## Development commands
 
+Run `python3 tools/check_all.py` for the combined local test workflow, logs, and native screenshots. Use `--no-gui` when GTK or a test display is unavailable.
 Run `python3 -m unittest discover -p 'test_*.py' -v` for the test suite.
 Run `node --check assets/app.js` after JavaScript changes.
 Start the browser interface with `python3 hub.py web`.

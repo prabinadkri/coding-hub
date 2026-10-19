@@ -315,10 +315,17 @@ Private task records, source search indexes, pinned requirements, conversation c
 
 ## Development
 
+Run the repeatable local test workflow from the repository:
+
 ```bash
-python3 -m unittest discover -p 'test_*.py' -v
-python3 hub.py web
+python3 tools/check_all.py            # Python/CLI/API, JavaScript syntax, native GUI
+python3 tools/check_all.py --no-gui   # Core checks on a machine without GTK/display support
+python3 tools/check_all.py --gui-only # Native GUI and saved-chat startup checks
 ```
+
+The runner prints a report directory containing `summary.json`, individual logs, and native screenshots. It returns a nonzero exit code if any requested check fails. `--output /path/to/new-directory` chooses where to save the report. Core checks require Node.js for JavaScript syntax; GUI checks need Linux, GTK 4/PyGObject, `dbus-run-session`, and either Xvfb or Xephyr with an existing graphical session. Xvfb stays hidden; Xephyr opens a separate test window. With Xephyr already installed, no additional display server is needed.
+
+These are scripted regression checks, not random clicking: they manipulate real GTK widgets with sample data and assert expected results. The runner uses separate state, makes no AI generation requests, and consumes no model tokens. The web API is covered by the Python suite; JavaScript syntax is checked, but browser clicks and rendering are not automated by this runner. Live model coding checks are separate and consume the selected provider's allowance. Screenshots aid visual review; they are not a pixel-by-pixel comparison against a baseline.
 
 The tests cover free-price rejection, fallback and cancellation, literal subprocess arguments, dashboard authentication, project isolation, incremental retrieval, bounded long-conversation context, instruction-file preservation, quota parsing, free-model usage isolation and retry-time handling, chat history, isolated parallel assignments and integration conflicts, serialized local fallback and cancellation, Smart model selection and call limits and review failures, and real background-server lifecycle. CI runs the suite on Linux and macOS. A separate native UI check builds the real GTK widgets with synthetic data, renders all six pages and existing conversations at two window widths, plus dark-mode previews. It checks chat deletion and cancellation, Ctrl+Enter, scroll following, reading-position preservation, compact composer size, model selection, temporary sign-in controls, theme persistence, message alignment, project-picker visibility, conversation navigation, task history, memory isolation, and refresh behavior without sending model prompts.
 
