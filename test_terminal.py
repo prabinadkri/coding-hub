@@ -97,6 +97,7 @@ class TerminalTests(unittest.TestCase):
                     if select.select([master],[],[],.1)[0]: output+=os.read(master,65536)
                 self.assertIn(b'You',output)
                 self.assertNotIn(b'Choose:',output)
+                self.assertIn(b'free-auto',output)
                 os.write(master,b'/he\t\n/quit\n')
                 deadline=time.monotonic()+5
                 while time.monotonic()<deadline:

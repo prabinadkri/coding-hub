@@ -110,7 +110,10 @@ def launch(port=8765):
 def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
     """Build native widgets independently of transport for isolated UI validation."""
     from gi.repository import Pango
-    routes = ("auto", "antigravity", "free", "local", "smart", "claude", "openai")
+    routes = hub.ROUTES
+    route_labels = {'free-auto': 'Free automatic', 'auto': 'Automatic', 'antigravity': 'Antigravity',
+                    'free': 'Free cloud', 'local': 'Local Qwen', 'smart': 'Smart',
+                    'claude': 'Claude account', 'openai': 'ChatGPT account'}
 
     class CodingHub(Gtk.Application):
         def __init__(self):
@@ -402,7 +405,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             route_label = self.label('Route', 'muted')
             route_label.set_wrap(False)
             options.append(route_label)
-            self.route = Gtk.DropDown.new_from_strings(['Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart', 'Claude account', 'ChatGPT account'])
+            self.route = Gtk.DropDown.new_from_strings([route_labels[key] for key in routes])
             self.route.set_tooltip_text('Coding route')
             self.route.connect('notify::selected', self.route_changed)
             self.quality = Gtk.DropDown.new_from_strings(['Fast', 'Deep'])
@@ -471,7 +474,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.project.set_editable(not bool(self.conversation))
                 self.browse_button.set_sensitive(not bool(self.conversation))
                 self.prompt.get_buffer().set_text(draft.get("prompt", ""))
-                self.route.set_selected(routes.index(draft.get("backend", "auto")))
+                self.route.set_selected(routes.index(draft.get("backend", hub.DEFAULT_ROUTE)))
                 if draft.get('model'):
                     self.chosen_models[draft.get('backend')] = draft['model']
                 self.quality.set_selected(1 if draft.get("quality") == "deep" else 0)
@@ -634,19 +637,20 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
         def route_changed(self, *_):
             selected = self.route.get_selected()
             if hasattr(self, 'chat_settings'):
-                self.chat_settings.set_label('Chat settings · ' + ('Automatic', 'Antigravity', 'Free cloud', 'Local Qwen', 'Smart', 'Claude account', 'ChatGPT account')[selected])
+                self.chat_settings.set_label('Chat settings · ' + route_labels[routes[selected]])
             if hasattr(self, "quality"):
                 self.quality.set_sensitive(routes[selected] in ("auto", "antigravity", "smart"))
             if hasattr(self, "hint"):
-                self.hint.set_text([
-                    "Antigravity → verified free models → local Qwen. Continues from partial work if a provider fails.",
-                    "Uses your Google sign-in. Fast selects Flash; Deep selects Pro. Provider quotas apply.",
-                    "Checks current zero-cost pricing before each run. Provider quotas apply.",
-                    "Qwen3 8B runs on this computer with 16K context. Best for focused tasks.",
-                    "Choose your manager model and up to 3 cloud workers for this same task. Independent project assignments run in separate copies, then are integrated and checked. Local fallback stays serial. At most 2 bounded manager calls; savings are not guaranteed.",
-                    "Uses your separate Claude subscription through its official CLI. Connect in Accounts first; your plan's limits apply.",
-                    "Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model; availability depends on your plan."
-                ][selected])
+                self.hint.set_text({
+                    'free-auto': 'Verified free coding models → local Qwen. Skips observed quota cooldowns. No subscription routes or paid model fallback.',
+                    'auto': 'Antigravity → verified free models → local Qwen. Continues from partial work if a provider fails.',
+                    'antigravity': 'Uses your Google sign-in. Fast selects Flash; Deep selects Pro. Provider quotas apply.',
+                    'free': 'Checks zero-cost pricing and retired-model status. Skips observed quota cooldowns; an explicitly chosen model lets you retry.',
+                    'local': 'Qwen3 8B runs on this computer with 16K context. Best for focused tasks.',
+                    'smart': 'Antigravity plans and reviews; free/local workers implement. At most 2 bounded manager calls; savings are not guaranteed.',
+                    'claude': 'Uses your separate Claude subscription. Connect in Accounts first; your plan limits apply.',
+                    'openai': 'Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model.'
+                }[routes[selected]])
             if hasattr(self, 'model_row'):
                 self.render_model_picker()
 
@@ -792,7 +796,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             box.append(self.history_search)
             filters = self.row(8)
             self.history_status = Gtk.DropDown.new_from_strings(['All statuses', 'In progress', 'Completed', 'Needs attention', 'Canceled'])
-            self.history_route = Gtk.DropDown.new_from_strings(['All routes', 'Auto', 'Smart', 'Antigravity', 'Free cloud', 'Local', 'Claude', 'ChatGPT'])
+            self.history_route = Gtk.DropDown.new_from_strings(['All routes', 'Auto', 'Smart', 'Antigravity', 'Free cloud', 'Local', 'Claude', 'ChatGPT', 'Free automatic'])
             for picker in (self.history_status, self.history_route):
                 picker.set_hexpand(True)
                 picker.connect('notify::selected', self.filter_history)
@@ -821,7 +825,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             if self.stack.get_visible_child_name() != 'history' or not hasattr(self, 'history_cards'):
                 return
             status = ('', 'active', 'completed', 'attention', 'canceled')[self.history_status.get_selected()]
-            route = ('', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai')[self.history_route.get_selected()]
+            route = ('', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai', 'free-auto')[self.history_route.get_selected()]
             query = self.history_search.get_text()
             signature = json.dumps([query, status, route, self.history_offset, [(t['id'], t['status']) for t in self.tasks], self.history_epoch])
             if signature == self.history_signature:

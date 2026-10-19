@@ -181,8 +181,13 @@ class DashboardTests(unittest.TestCase):
         code, task = self.request('/api/tasks', {'scope':'general','prompt':'Explain Linux memory'})
         self.assertEqual(code, 201)
         self.assertEqual(task['scope'],'general')
+        self.assertEqual(task['backend'], 'free-auto')
         self.assertEqual(Path(task['project']), hub.general_workspace().resolve())
         self.wait_task(task['id'])
+        command = self.manager.command(task)
+        self.assertEqual(command[command.index('--backend') + 1], 'free-auto')
+        history = self.request('/api/history?route=free-auto')[1]
+        self.assertEqual([row['id'] for row in history['tasks']], [task['id']])
         self.assertIn('--general',self.manager.command(task))
         self.assertNotIn('--project',self.manager.command(task))
         code, data = self.request('/api/conversation?project='+task['project']+'&id='+task['conversation'])
@@ -291,7 +296,7 @@ class RoutingTests(unittest.TestCase):
              patch.object(hub, "executable", return_value="agent"), \
              patch.object(hub, "run_process", return_value=(0, "done", False)), \
              contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(hub.run_task(folder, "test"), 0)
+            self.assertEqual(hub.run_task(folder, "test", backend="auto"), 0)
             candidates.assert_called_once_with("antigravity", "fast")
 
 

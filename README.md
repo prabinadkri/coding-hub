@@ -21,6 +21,8 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 - A Usage & limits page: live Antigravity quotas, free-model local usage and observed retry times, expected daily reset countdowns, and local Qwen status.
 - Opt-in Smart routing: Antigravity makes a short plan and reviews evidence; verified free models or local Qwen perform the work, with measured manager token usage and at most two manager calls.
 - Automatic fallback: Antigravity → currently verified free OpenCode models → local Qwen3 8B. A handoff preserves the original task and partial changes.
+- **Free automatic**, the default for fresh sessions: verified free coding models → local Qwen. No Antigravity, Claude subscription, ChatGPT subscription, or paid-model fallback. Existing saved route selections stay unchanged.
+- Quota-aware selection: observed model cooldowns are skipped; a shared free-usage limit pauses the free cloud chain until its reported retry time. Missing retry times use a five-minute local backoff, not a claimed quota reset.
 - NVIDIA status, actual model offload, memory usage, and a button to release the local model from memory.
 - A lightweight Python backend and plain HTML/CSS/JavaScript, with no package installation or npm build required. Sign-in terminal rendering bundles unmodified `pyte` and `wcwidth`; source and licenses are in `vendor/`.
 - A native Linux app window using GTK 4, with its own icon, plus a terminal menu and command-line interface.
@@ -37,7 +39,7 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 
 1. Open **Coding Hub** from Applications. Pin that entry to your dock if desired. Its desktop ID and icon match the running GTK window.
 2. Choose **New chat → General task** for questions, Linux commands, or standalone work—no folder required. Choose **Project task** or **New project** to select a project folder. Existing chats keep their original scope.
-3. Expand **Chat settings**. Select a route and then a model. Antigravity lists models available to your Google account, including any Claude/GPT options. Free cloud shows currently verified free models; Local shows installed Ollama models. Smart lets you choose its Antigravity manager model and up to three cloud workers; Automatic selects its route models.
+3. Expand **Chat settings**. Use **Free automatic** for free cloud coding with local fallback. Choose **Free cloud** or **Local** to select a particular model. Antigravity lists models available to your Google account, including any Claude/GPT options. Smart lets you choose its Antigravity manager model and up to three cloud workers; Automatic starts with Antigravity.
 4. Leave **Allow edits & commands** off for explanations. Enable it to let the agent modify project files and run commands.
 5. An animated indicator shows observed activity, such as planning, a tool action, waiting for the model, or review, with elapsed time. **Stop task** remains beside Send. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
 6. Replies format headings, lists, inline code, and code blocks. Replies span the reading area, with small copy/review actions beneath them and language labels on code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
@@ -69,6 +71,7 @@ These routes use your existing plan’s limits and model eligibility. They are n
 
 ```bash
 codehub                              # Start chatting immediately
+codehub chat --backend free-auto      # Verified free cloud → local Qwen
 codehub menu                         # Optional launcher menu
 codehub chat --general               # Standalone chat; no project folder
 codehub chat --general --backend local
@@ -93,7 +96,7 @@ Inside `codehub chat`:
 - `/paste` accepts a multiline message. Finish with a single `.` on its own line; `/cancel` discards it.
 - `/models` lists choices; `/model MODEL_ID` selects one; `/model default` restores the default.
 - `/workers 1`, `/workers 2`, or `/workers 3` sets the Smart maximum cloud workers for the same task. Local fallback remains one at a time. `/models` and `/model ID` on Smart select the Antigravity manager, including account-available Claude and Gemini models.
-- `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic and Smart are supported too.
+- `/route free-auto` selects free cloud with local fallback. `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic and Smart are supported too.
 - `/project /path/to/folder` starts a project conversation; `/general` returns to standalone tasks.
 - `/mode analysis` explains only; `/mode build` enables commands and requested changes.
 - `/edit on` enables commands and requested changes; `/edit off` returns to analysis mode.
@@ -294,11 +297,15 @@ Qwen3 8B uses Q4_K_M weights, 16K context, a 2,048-token output limit, and expli
 
 The 16K setting is a hardware compromise, below [Ollama's documented 64K+ OpenCode requirement](https://docs.ollama.com/integrations/opencode). Small tasks work in testing; individual requests and tool results can still exceed the limit even with retrieval and checkpoints. Prefer cloud agents for complex work. See [GPU setup](docs/gpu-setup.md) for driver troubleshooting.
 
-Automatic routing starts Antigravity immediately. Free-model pricing is fetched only if that route is reached. Dashboard status uses a short cache; it never authorizes a paid request from cached pricing. There is one active dashboard task at a time, and the coordinator also locks each workspace. Process-lifetime locks release when the owner exits; abandoned lock files from older versions are recovered automatically. A genuinely active task remains protected from concurrent changes.
+Free automatic checks current free-model pricing and observed cooldowns, then tries local Qwen if cloud access is unavailable. It never starts subscription routes. Automatic still starts Antigravity first when you explicitly select it. Pricing is fetched only when the free route is reached. Dashboard status uses a short cache; it never authorizes a paid request from cached pricing. There is one active dashboard task at a time, and the coordinator also locks each workspace. Process-lifetime locks release when the owner exits; abandoned lock files from older versions are recovered automatically. An active task remains protected from concurrent changes.
+
+Default free selection skips a model until its recorded `Retry-After` time. A shared free-usage limit skips the free cloud chain; a later successful free response clears that shared observation. With no reported retry time, the hub backs off for five minutes. This is a local retry policy, not a provider reset promise. Choosing an explicit **Free cloud** model allows a deliberate retry. Cancellation and task timeouts stop execution without starting a second agent.
 
 ## Free access and privacy
 
-The free route allowlists Space Bunny, LongCat, and Big Pickle, requires tool support and all recorded token costs to be zero in [models.dev](https://models.dev), and pins the primary and helper models. If current pricing cannot be checked, that route is skipped. Catalogs can lag provider changes, so this is not a billing guarantee. Keep accounts on free access and do not add payment details or select paid models manually. Provider quotas and promotions can change.
+The coding allowlist contains DeepSeek V4.1 Flash, Reflection Beam, Space Bunny, LongCat 2.5 Preview, and Big Pickle. New additions are coding-focused models: see [DeepSeek's release](https://www.deepseek.com/en/news/deepseek-v4-1-flash/) and [Beam's OpenCode integration](https://reflection.ai/blog/beam-is-available). Selection requires current zero prices for every recorded cost, tool support, and a non-deprecated entry in [models.dev](https://models.dev). The primary and helper models stay pinned to that same free model. An arbitrary model with “free” in its name is never automatically added.
+
+The allowlist was reviewed on October 19, 2026. It is a selection policy, not a claim that one model is best for every repository. If current pricing cannot be checked, the free cloud route is skipped. Catalogs can lag provider changes, so this is not a billing guarantee. Keep accounts on free access and do not add payment details or select paid models manually. Provider quotas and promotions can change.
 
 Setup sets Antigravity's `useG1Credits` preference to false and backs up existing settings once. No credit purchases are made. [OpenCode's free Big Pickle terms](https://opencode.ai/docs/zen/) say free-period data may be used to improve the model.
 

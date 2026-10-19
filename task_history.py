@@ -13,7 +13,7 @@ class HistoryIndex:
     def page(self, query='', status='', route='', offset=0, limit=20):
         if len(query) > 500 or status not in ('', 'active', 'completed', 'attention', 'canceled'):
             raise ValueError('Invalid history filter.')
-        if route not in ('', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai'):
+        if route not in ('', 'free-auto', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai'):
             raise ValueError('Invalid history route.')
         if offset < 0 or not 1 <= limit <= 50:
             raise ValueError('Invalid history page.')

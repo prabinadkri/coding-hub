@@ -13,6 +13,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import desktop
 import hub
+import free_quota
 
 
 def main():
@@ -44,7 +45,7 @@ def main():
                   {'name': 'Claude and GPT models', 'buckets': [{'remaining_percent': 100, 'reset_at': now + 172000}]}]},
               'free_quota': {'checked_at': now, 'expected_reset_at': (int(now // 86400) + 1) * 86400,
                   'coverage': 'These are local response and token counts, not requests remaining. Models can share limits across devices.',
-                  'models': [{'id': mid, 'name': name, 'status': 'not_reported', 'usage': usage, 'observation': None} for mid, name in zip(hub.FREE_MODELS, ['Space Bunny', 'LongCat 2.5 Preview', 'Big Pickle'])],
+                  'models': [{'id': mid, 'name': free_quota.NAMES[mid], 'status': 'not_reported', 'usage': usage, 'observation': None} for mid in hub.FREE_MODELS],
                   'local': {'usage': usage}}}
     project = '/workspace/studio'
     task = {'id': 'preview-task', 'conversation': 'preview-chat', 'status': 'completed', 'prompt': 'Improve the project dashboard layout',
@@ -131,6 +132,8 @@ def main():
             app.register(None)
             app.activate()
             settle(.7)
+            assert app.form()['backend'] == 'free-auto'
+            assert not app.model_row.get_visible() and not app.quality.get_sensitive()
             app.scope.set_selected(1)
             app.project.set_text(project)
             assert not app.error.get_visible(), app.error.get_text()
@@ -230,14 +233,14 @@ def main():
             app.review_window.close()
             app.window.present()
             settle()
-            app.route.set_selected(2)
+            app.route.set_selected(hub.ROUTES.index('free'))
             assert app.model_row.get_visible()
             app.model_picker.set_selected(1)
             assert app.form()['model'] == hub.FREE_MODELS[0]
-            app.route.set_selected(3)
+            app.route.set_selected(hub.ROUTES.index('local'))
             app.model_picker.set_selected(2)
             assert app.form()['model'] == 'qwen3:8b'
-            app.route.set_selected(4)
+            app.route.set_selected(hub.ROUTES.index('smart'))
             assert app.model_row.get_visible() and app.workers_row.get_visible()
             assert app.model_row.get_first_child().get_text() == 'Manager model'
             assert 'claude-opus-4-6-thinking' in app.model_keys
@@ -252,7 +255,7 @@ def main():
             app.save_draft()
             saved_draft = json.loads(app.draft_path.read_text())
             assert saved_draft['workers'] == 2 and saved_draft['model'] == 'claude-manager'
-            app.route.set_selected(0)
+            app.route.set_selected(hub.ROUTES.index('auto'))
             assert not app.workers_row.get_visible()
             assert app.form()['workers'] == 1
             assert app.form()['model'] is None
@@ -331,7 +334,7 @@ def main():
                 app.stack.set_visible_child_name(page)
                 settle()
                 capture(app.window, f'desktop-dark-{page}.png')
-            app.route.set_selected(1)
+            app.route.set_selected(hub.ROUTES.index('antigravity'))
             app.start_signin('antigravity')
             settle()
             assert app.signin_panel.get_visible()

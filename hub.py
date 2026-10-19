@@ -22,7 +22,9 @@ import terminal_ui
 
 ROOT = Path(__file__).resolve().parent
 STATE = Path(os.environ.get("CODING_HUB_STATE", str(Path.home() / ".local/state/coding-hub")))
-FREE_MODELS = ("space-bunny-free", "longcat-2.5-preview-free", "big-pickle")
+FREE_MODELS = ("deepseek-v4.1-flash-free", "beam-free", "space-bunny-free", "longcat-2.5-preview-free", "big-pickle")
+DEFAULT_ROUTE = "free-auto"
+ROUTES = ("free-auto", "auto", "smart", "antigravity", "free", "local", "claude", "openai")
 AGY_MODELS = {"fast": "gemini-3.8-flash-medium", "deep": "gemini-3.1-pro-high"}
 LOCAL_MODEL = "qwen3:8b"
 LOCAL_AGENT_MODEL = "coding-hub-qwen:8b"
@@ -80,7 +82,7 @@ def get_json(url, timeout=15):
 
 def zero_cost(metadata):
     cost = metadata.get("cost", {})
-    return (metadata.get("tool_call") is True and
+    return (metadata.get("status") != "deprecated" and metadata.get("tool_call") is True and
             all(isinstance(cost.get(key), (int, float)) and not isinstance(cost.get(key), bool)
                 and cost[key] == 0 for key in ("input", "output")) and
             all(isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0
@@ -396,12 +398,20 @@ def candidates(backend, quality):
     result = []
     if backend in ("auto", "antigravity") and executable("agy"):
         result.append(("antigravity", AGY_MODELS[quality]))
-    if backend in ("auto", "free") and executable("opencode"):
+    if backend in ("auto", "free-auto", "free") and executable("opencode"):
         try:
-            result.extend(("free", name) for name in refresh_free_models())
+            import free_quota
+            available = refresh_free_models()
+            cooldowns = free_quota.routing_cooldowns()
+            for name in available:
+                if name in cooldowns:
+                    item = cooldowns[name]
+                    print(f"Skipping {name}: {item['basis']} · retry in {max(1, int(item['retry_at'] - time.time()))}s.")
+                else:
+                    result.append(("free", name))
         except Exception as error:
             print(f"Free model pricing could not be verified ({type(error).__name__}); skipping that route.")
-    if backend in ("auto", "local") and executable("opencode"):
+    if backend in ("auto", "free-auto", "local") and executable("opencode"):
         try:
             models = local_models()
             if LOCAL_AGENT_MODEL in models:
@@ -433,8 +443,16 @@ def route_options(backend, quality):
         yield "smart", "Antigravity manager + free/local workers"
         return
     # Verify free prices only if that route is reached. Local-only stays offline.
-    for choice in (("antigravity", "free", "local") if backend == "auto" else (backend,)):
-        yield from candidates(choice, quality)
+    choices = ("free", "local") if backend == "free-auto" else ("antigravity", "free", "local") if backend == "auto" else (backend,)
+    for choice in choices:
+        for index, (route, model) in enumerate(candidates(choice, quality)):
+            # A previous attempt may just have exhausted a shared free allowance.
+            if route == "free" and index:
+                import free_quota
+                if model in free_quota.routing_cooldowns():
+                    print(f"Skipping {model}: a free-provider cooldown is active.")
+                    continue
+            yield route, model
 
 
 def validate_model(backend, model):
@@ -452,7 +470,7 @@ def model_choices(backend):
         return [{'id': name, 'name': name} for name in local_models()]
     if backend == 'free':
         return [{'id': name, 'name': name} for name in refresh_free_models()]
-    if backend == 'auto':
+    if backend in ('auto', 'free-auto'):
         return []
     if backend == 'smart':
         backend = 'antigravity'
@@ -466,7 +484,7 @@ def show_models(backend):
     for choice in choices:
         print('  ' + choice['id'] + ('  ·  ' + choice['name'] if choice['id'] != choice['name'] else ''))
     if not choices:
-        print('  Automatic chooses its route models.' if backend == 'auto' else '  Model catalog unavailable. Check provider sign-in and try again.')
+        print('  Automatic chooses its route models.' if backend in ('auto', 'free-auto') else '  Model catalog unavailable. Check provider sign-in and try again.')
     return choices
 
 
@@ -478,7 +496,7 @@ def validate_workers(backend, workers):
     return workers
 
 
-def run_task(project, request, backend="auto", quality="fast", apply=False, dry_run=False, conversation=None, resume=False, model=None, workers=1):
+def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=False, dry_run=False, conversation=None, resume=False, model=None, workers=1):
     project = Path(project).expanduser().resolve()
     if not project.is_dir():
         raise ValueError(f"Project directory does not exist: {project}")
@@ -572,7 +590,7 @@ def run_task(project, request, backend="auto", quality="fast", apply=False, dry_
                 save_json(folder / "task.json", record)
                 print(f"Stopped: {failure}. Partial changes are preserved; no fallback was started.")
                 return code if code > 0 else 130
-            if requested_model or backend not in ("auto", "free"):
+            if requested_model or backend not in ("auto", "free-auto", "free"):
                 break
             prior = output
             print(f"Backend stopped ({failure}); handing this task to the next available route.")
@@ -660,11 +678,11 @@ def menu():
                 continue
             if choice == '8':
                 project = input('Project directory [Enter for a general task]: ').strip() or general_workspace()
-                backend = input('Route [auto / smart / antigravity / free / local / claude / openai]: ').strip() or 'auto'
-                if backend not in ('auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai'):
+                backend = input('Route [free-auto / auto / smart / antigravity / free / local / claude / openai]: ').strip() or DEFAULT_ROUTE
+                if backend not in ROUTES:
                     raise ValueError('Choose one of the listed routes.')
                 show_models(backend)
-                model = input('Model ID [route default]: ').strip() or None if backend not in ('auto', 'smart') else None
+                model = input('Model ID [route default]: ').strip() or None if backend not in ('free-auto', 'auto', 'smart') else None
                 chat(project, backend=backend, model=model)
                 continue
             if choice not in {"1", "2", "3", "4", "5"}:
@@ -684,7 +702,7 @@ def menu():
             return 130
 
 
-def chat(project, backend="auto", quality="fast", apply=False, resume=False, model=None, workers=1):
+def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=False, model=None, workers=1):
     from context_engine import ProjectMemory
     memory = ProjectMemory(project)
     conversation = memory.conversation(resume=True) if resume else None
@@ -739,8 +757,8 @@ def chat(project, backend="auto", quality="fast", apply=False, resume=False, mod
                     model = validate_model(backend, None if argument == 'default' else argument)
                     print('Model: ' + (model or 'route default')); continue
                 if name == '/route':
-                    if argument not in ('auto','smart','antigravity','free','local','claude','openai'):
-                        print('Choose auto, smart, antigravity, free, local, claude or openai.'); continue
+                    if argument not in ROUTES:
+                        print('Choose ' + ', '.join(ROUTES) + '.'); continue
                     backend, model = argument, None
                     print('Route: ' + backend + ' · use /models to choose a model'); continue
                 if name in ('/project','/general'):
@@ -862,7 +880,7 @@ def main():
         scope = item.add_mutually_exclusive_group()
         scope.add_argument('--project', default=os.getcwd())
         scope.add_argument('--general', action='store_true', help='Standalone task or Linux help; no project folder needed')
-        item.add_argument("--backend", choices=(("auto", "antigravity", "free", "local") if name == "open" else ("auto", "smart", "antigravity", "free", "local", "claude", "openai")), default="auto")
+        item.add_argument("--backend", choices=(("free-auto", "auto", "antigravity", "free", "local") if name == "open" else ROUTES), default=DEFAULT_ROUTE)
         if name != 'open':
             item.add_argument('--model', help='Direct model ID, or Antigravity manager model for Smart; required for ChatGPT')
             item.add_argument('--workers', type=int, choices=(1, 2, 3), default=1, help='Smart maximum parallel cloud workers; local stays serial')

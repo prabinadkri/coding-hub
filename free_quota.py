@@ -15,7 +15,8 @@ import threading
 import time
 import hub
 
-NAMES = {'space-bunny-free': 'Space Bunny', 'longcat-2.5-preview-free': 'LongCat 2.5 Preview', 'big-pickle': 'Big Pickle'}
+NAMES = {'deepseek-v4.1-flash-free': 'DeepSeek V4.1 Flash', 'beam-free': 'Reflection Beam',
+         'space-bunny-free': 'Space Bunny', 'longcat-2.5-preview-free': 'LongCat 2.5 Preview', 'big-pickle': 'Big Pickle'}
 LIMITER_SOURCE = 'https://github.com/anomalyco/opencode/blob/5d9cd9b259f0456522f318a7435501d03cfbee79/packages/console/app/src/routes/zen/util/ipRateLimiter.ts'
 COVERAGE = ('Local OpenCode observations on this laptop, across projects. These are AI response and token counts, '
             'not remaining requests. Retries, other devices and shared public-IP usage may be missing. Free models can share a quota.')
@@ -140,6 +141,7 @@ def snapshot(path=None, now=None):
                 if observation:
                     observed[model] = observation
             for row in rows:
+                row['last_success_at'] = successes.get(row['id'], 0) / 1000
                 observation = observed.get(row['id'])
                 if observation:
                     row['observation'] = observation
@@ -150,6 +152,38 @@ def snapshot(path=None, now=None):
         for row in [*rows, local]:
             row.update(usage=None, observation=None)
         result['error'] = 'Local usage could not be read (database busy, unsupported schema, or query time limit). Remaining allowance is unknown.'
+    return result
+
+
+def routing_cooldowns(payload=None, now=None):
+    """Use observed limits, never guessed remaining quotas, to avoid wasted attempts."""
+    now = time.time() if now is None else now
+    payload = snapshot(now=now) if payload is None else payload
+    if not payload.get('available'):
+        return {}
+    def timestamp(value):
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else 0
+    rows = payload.get('models') or []
+    latest_success = max((timestamp(row.get('last_success_at')) for row in rows), default=0)
+    result = {}
+    for row in rows:
+        observation = row.get('observation') or {}
+        observed = timestamp(observation.get('observed_at'))
+        if not observed or observed > now or row.get('id') not in hub.FREE_MODELS:
+            continue
+        shared = observation.get('kind') == 'free_limit'
+        if shared and latest_success > observed:
+            continue
+        retry = observation.get('retry_at')
+        reported = isinstance(retry, (int, float)) and not isinstance(retry, bool) and math.isfinite(retry)
+        until = retry if reported else observed + 300
+        if until <= now:
+            continue
+        item = {'retry_at': until, 'shared': shared,
+                'basis': 'provider Retry-After' if reported else 'local five-minute backoff (reset unknown)'}
+        for model in hub.FREE_MODELS if shared else (row['id'],):
+            if until > result.get(model, {}).get('retry_at', 0):
+                result[model] = item
     return result
 
 

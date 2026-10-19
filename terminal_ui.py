@@ -41,7 +41,7 @@ def help_text():
     print('\n' + style('Conversation'))
     print('  /new              New chat in the current workspace\n  /delete           Delete the current chat after confirmation\n  /general          Standalone chat without a project\n  /project PATH     Switch to a project folder\n  /paste            Multiline message; finish with a single .\n  /quit             Leave the chat')
     print('\n' + style('Agent'))
-    print('  /route NAME       auto, smart, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model (Smart: Antigravity manager)\n  /workers 1|2|3    Smart maximum cloud workers; local stays serial\n  /mode analysis|build  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
+    print('  /route NAME       free-auto, auto, smart, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model (Smart: Antigravity manager)\n  /workers 1|2|3    Smart maximum cloud workers; local stays serial\n  /mode analysis|build  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
     print('\n' + style('Project'))
     print('  /delete-project   Remove this project’s saved chats and Hub memory; keep files')
     print('  /details          Show the latest reply’s Smart run details\n  /changes          Review the latest task diff\n  /memory           Shared instructions and index coverage\n  /status           Project, route, model, and edit mode\n  /doctor           Check Linux; include report in your next message')

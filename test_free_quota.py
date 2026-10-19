@@ -21,7 +21,7 @@ class FreeQuotaTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def message(self, ident, model='space-bunny-free', provider='opencode', at=None, **extra):
+    def message(self, ident, model=hub.FREE_MODELS[0], provider='opencode', at=None, **extra):
         at = self.now - 120 if at is None else at
         data = {'role': 'assistant', 'modelID': model, 'providerID': provider,
                 'finish': 'stop', 'tokens': {'input': 10, 'output': 5, 'reasoning': 2, 'cache': {'read': 3, 'write': 1}}}

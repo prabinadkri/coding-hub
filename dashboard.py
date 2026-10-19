@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.9.1"
+VERSION = "2.10.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -145,8 +145,8 @@ class TaskManager:
         project = Path(project).expanduser().resolve()
         if not project.is_dir():
             raise ValueError("The project folder does not exist.")
-        backend, quality, mode = data.get("backend", "auto"), data.get("quality", "fast"), data.get("mode", "analysis")
-        if backend not in ("auto", "smart", "antigravity", "free", "local", "claude", "openai") or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
+        backend, quality, mode = data.get("backend", hub.DEFAULT_ROUTE), data.get("quality", "fast"), data.get("mode", "analysis")
+        if backend not in hub.ROUTES or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
             raise ValueError("Choose a valid route, quality and task mode.")
         model = hub.validate_model(backend, data.get('model'))
         workers = hub.validate_workers(backend, data.get('workers', 1))
