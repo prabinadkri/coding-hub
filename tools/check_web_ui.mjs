@@ -46,7 +46,7 @@ try {
   await page.locator('#prompt').fill('Second synthetic queued task');await page.locator('#prompt').press('Control+Enter');
   await page.waitForFunction(()=>!document.getElementById('run-task').disabled && !document.getElementById('prompt').value);
   await open('queue');
-  await page.getByText('Second synthetic queued task',{exact:true}).waitFor();
+  await page.locator('#features-body').getByText('Second synthetic queued task',{exact:true}).waitFor();
   const rows=page.locator('#features-body .feature-card');assert.equal(await rows.count(),2);
   await rows.nth(1).getByRole('button',{name:'Move up'}).click();
   await page.waitForFunction(()=>document.querySelector('#features-body .feature-card strong')?.textContent==='Second synthetic queued task');
