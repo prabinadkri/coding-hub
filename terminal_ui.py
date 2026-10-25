@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-COMMANDS = ('/queue', '/checks', '/verify', '/browser-test', '/metrics', '/apply', '/undo', '/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/delete-project', '/memory', '/changes', '/details', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
+COMMANDS = ('/files', '/reveal', '/queue', '/checks', '/verify', '/browser-test', '/metrics', '/apply', '/undo', '/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/delete-project', '/memory', '/changes', '/details', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
 
 
 def interactive():
@@ -45,6 +45,7 @@ def help_text():
     print('\n' + style('Project'))
     print('  /delete-project   Remove this project’s saved chats and Hub memory; keep files')
     print('  /details          Show the latest reply’s Smart run details\n  /changes          Review the latest task diff\n  /memory           Shared instructions and index coverage\n  /status           Project, route, model, and edit mode\n  /doctor           Check Linux; include report in your next message')
+    print('  /files [PATH]     List latest reply references or preview a file/folder\n  /reveal PATH      Show a referenced file/folder in the file manager')
     print('  /queue            Inspect shared task queue; /queue pause or resume')
     print('  /checks COMMAND   Configure a project check; /checks clear removes checks\n  /verify           Run configured checks without AI\n  /browser-test     Discover, start and test this website; optional localhost URL\n  /metrics          Observed model results and cooldowns\n  /apply TASK FILE… Apply selected preview files\n  /undo TASK FILE…  Undo selected files unless changed afterward')
     print(style('\n  Existing :commands work too. Use codehub quota for usage details.', '2'))

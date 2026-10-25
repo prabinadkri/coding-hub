@@ -911,6 +911,29 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                 if name == '/changes':
                     from change_review import show
                     show(memory.project); continue
+                if name in ('/files', '/reveal'):
+                    import reply_files
+                    turns = memory.messages(conversation, limit=1)['turns'] if conversation else []
+                    task = turns[-1]['task'] if turns else None
+                    if not argument:
+                        refs = turns[-1].get('file_references', []) if turns else []
+                        for ref in refs: print('  ' + terminal_ui.safe_text(ref['path']))
+                        print('Use /files PATH to preview, or /reveal PATH to show in your file manager.')
+                    elif name == '/reveal':
+                        value = reply_files.reveal(memory.project, argument, task)
+                        print('Opened in file manager: ' + terminal_ui.safe_text(value['opened']))
+                    else:
+                        value = reply_files.describe(memory.project, argument, task)
+                        print(terminal_ui.safe_text(value['path']))
+                        if value['kind'] == 'folder':
+                            for entry in value['entries']: print('  ' + terminal_ui.safe_text(entry['name']) + ('/' if entry['kind']=='folder' else ''))
+                            if value['has_more'] or value['scan_limited']: print('Listing shortened. Use /reveal PATH to see all entries.')
+                        elif value['kind'] == 'text':
+                            print(terminal_ui.safe_text(value['text']))
+                            if value['truncated']: print('Preview shortened. Use /reveal PATH for the full file.')
+                        else: print('Use /reveal PATH to view this file in your file manager.')
+                        if value.get('note'): print(value['note'])
+                    continue
                 if name in ('/checks', '/verify', '/browser-test', '/metrics', '/apply', '/undo'):
                     from project_checks import profile, run as run_checks
                     if name == '/checks':

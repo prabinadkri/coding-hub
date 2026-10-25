@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.12.0"
+VERSION = "2.13.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -485,7 +485,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -513,6 +513,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             query = parse_qs(parsed.query)
+            if parsed.path in ('/api/files/preview', '/api/files/download'):
+                import reply_files
+                project, reference = query.get('project', [''])[0], query.get('path', [''])[0]
+                task = query.get('task', [None])[0]
+                if parsed.path.endswith('/download'):
+                    return self.reply(200, reply_files.download(project, reference, task), 'application/octet-stream')
+                return self.reply(200, reply_files.describe(project, reference, task, int(query.get('offset', ['0'])[0])))
             if parsed.path == '/api/queue':
                 return self.reply(200, self.server.manager.queue())
             if parsed.path == '/api/metrics':
@@ -606,6 +613,9 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
+            if self.path == '/api/files/reveal':
+                from reply_files import reveal
+                return self.reply(200, reveal(data.get('project', ''), data.get('path'), data.get('task')))
             if self.path == '/api/queue':
                 return self.reply(200, self.server.manager.control_queue(data))
             if self.path == '/api/checks':

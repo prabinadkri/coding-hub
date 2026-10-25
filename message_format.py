@@ -53,11 +53,24 @@ def blocks(text, with_languages=False):
     return result
 
 
-def inline_markup(text):
-    parts = re.split(r'(\*\*[^*\n]+\*\*|`[^`\n]+`)', text)
-    return ''.join('<b>'+html.escape(p[2:-2])+'</b>' if p.startswith('**') and p.endswith('**')
-                   else '<tt>'+html.escape(p[1:-1])+'</tt>' if p.startswith('`') and p.endswith('`')
-                   else html.escape(p) for p in parts)
+def inline_markup(text, references=None):
+    references = references or []
+    links = {item['raw']: (index, item) for index, item in enumerate(references)}
+    patterns = [re.escape(raw) for raw in sorted(links, key=len, reverse=True)] + [r'\*\*[^*\n]+\*\*', r'`[^`\n]+`']
+    parts = re.split('(' + '|'.join(patterns) + ')', text)
+    rendered = []
+    for part in parts:
+        if part in links:
+            index, item = links[part]
+            label = html.escape(item['label'])
+            if part.startswith('`'): label = '<tt>' + label + '</tt>'
+            rendered.append(f'<a href="codehub-file:{index}">{label}</a>')
+        elif part.startswith('**') and part.endswith('**'):
+            rendered.append('<b>' + inline_markup(part[2:-2], references) + '</b>')
+        elif part.startswith('`') and part.endswith('`'):
+            rendered.append('<tt>' + html.escape(part[1:-1]) + '</tt>')
+        else: rendered.append(html.escape(part))
+    return ''.join(rendered)
 
 
 def terminal_reply(text):

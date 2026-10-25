@@ -22,7 +22,7 @@ class Cache:
 
 
 with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
-    root=Path(temporary);hub.STATE=root/'state';project=root/'project';project.mkdir()
+    root=Path(temporary).resolve();hub.STATE=root/'state';project=root/'project';project.mkdir()
     (project/'source.py').write_text('answer = 1\n')
     html='<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Browser fixture</title><h1>Ready to test</h1><a href="/about.html">About</a>'
     (project/'index.html').write_text(html)
@@ -33,6 +33,15 @@ with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
         with workspace_changes.session(project, folder, True, True) as working:
             (working/'source.py').write_text('answer = 2\n')
     memory.record(conversation,folder.name,'Improve the answer','Preview ready.','completed')
+    import reply_files
+    (project/'cypress'/'screenshots').mkdir(parents=True)
+    (project/'cypress'/'screenshots'/'passed.png').write_bytes((hub.ROOT/'docs'/'desktop-workspace.png').read_bytes())
+    (project/'.cypress-e2e.log').write_text('All 12 browser checks passed\n')
+    (project/'lines.py').write_text('\n'.join('line '+str(i) for i in range(1,101)))
+    memory.record(conversation,'files-task','Review test artifacts',
+        'Screenshots/logs are in cypress/screenshots/ and `.cypress-e2e.log`. See lines.py:42 and missing.log.', 'completed')
+    # Exercise authenticated reveal routing without opening the host file manager in CI.
+    reply_files.reveal=lambda project,reference,task=None: {'opened':str(reply_files.resolve(project,reference,task)[0]),'selected':True}
     manager=dashboard.TaskManager(command_factory=lambda t: dashboard.TaskManager.command(t) if browser_checks.chat_request(t['prompt']) is not None else [sys.executable,'-u','-c','import time;print("Synthetic task");time.sleep(.4)'])
     status=Cache({'checking':False,'programs':{},'models':[hub.LOCAL_AGENT_MODEL],'free_models':['beam-free'],
                   'local_ready':True,'local_model':hub.LOCAL_AGENT_MODEL,'gpu':None,'ram':None,'loaded':[],

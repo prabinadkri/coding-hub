@@ -433,6 +433,16 @@ Recovery checkpoints cover eligible source and common binary assets within the l
 
 ![Browser file diff review with sample data](docs/web-changes.png)
 
+### Opening files mentioned in replies
+
+Click an underlined file or folder in an assistant reply, such as `cypress/screenshots/`, `.cypress-e2e.log`, or `src/app.py:42`. The app and web interface open a read-only preview with **Show in Files**, **Copy path**, **Refresh**, and **Parent folder** actions. Screenshot folders are browsable, supported images display inline, and text references can highlight a requested line. The web interface also offers **Download** for files up to 20 MiB. Show in Files uses the file manager on the computer running Coding Hub; remote web users can use Download instead.
+
+References are detected when opening saved chats, including older replies. Paths are resolved against that reply’s project; relative paths from preview tasks use the preview workspace. Explicit absolute paths still refer to that exact location. The preview shows the file’s current contents, not a historical snapshot. Missing files produce a clear message and a copyable reference. Quoted paths or Markdown links support spaces. References inside code blocks stay literal.
+
+Previews read at most 128 KiB of text and display up to 600 lines; large `.log` and `.jsonl` files show their latest output. Requested lines outside the bounded preview are labeled. Images are limited to 8 MiB. Folders show 100 entries per page from a bounded scan of 2,000 entries. Show in Files provides access to the full file or listing. Symlinks, credential paths, and files outside the project or that reply’s saved browser artifacts are not opened through this feature. File previews do not execute files or use model tokens.
+
+In terminal chat, use `/files` to list references from the latest reply, `/files PATH` to preview text or a folder, and `/reveal PATH` to show the location in your desktop file manager. Paths may include spaces without shell quoting. These commands keep your conversation and selected model unchanged.
+
 ### Provider access troubleshooting
 
 The CLI's native stream errors are monitored for reported free-usage limits. If a provider retries without emitting a final JSON error, Hub stops those retries and records a five-minute local backoff when no reset is provided. That backoff is not a claimed allowance reset. A provider can reject restricted manager requests even when a normal coding request works; Free Smart then stops clearly without enabling tools or switching to a subscription. Choose Free automatic to continue normal coding.

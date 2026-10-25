@@ -435,6 +435,8 @@ class ProjectMemory:
                             turn['browser_report'] = browser['id']
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass
+            from reply_files import references
+            turn['file_references'] = references(turn['result'])
             turns.append(turn)
         return dict(conversation, scope='general' if hub.is_general(self.project) else 'project', project=str(self.project), turns=turns, total_turns=total,
                     oldest_cursor=oldest, has_older=has_older)

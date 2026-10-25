@@ -68,6 +68,21 @@ def main():
         if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
         if path.startswith('checks?'): return {'commands':['python3 -m unittest'], 'timeout':180, 'repairs':0, 'browser':{'url':'http://127.0.0.1:3000','steps':[]}}
         if path.startswith('browser/report?'): return {'status':'passed','url':'http://127.0.0.1:3000/','pages':[{},{}],'steps':[], 'directory':str(hub.ROOT/'docs'), 'screenshots':['desktop-workspace.png'], 'started':True}
+        if path.startswith('files/preview?'):
+            from urllib.parse import parse_qs, urlsplit
+            import base64
+            query=parse_qs(urlsplit(path).query);reference=query['path'][0]
+            assert query['project']==[project] and query['task']==['files-task']
+            value={'name':Path(reference).name,'path':project+'/'+reference,'parent':None,'size':40,'first_line':27,'line':42,'note':'','truncated':False}
+            if reference=='cypress/screenshots/':
+                return dict(value,kind='folder',entries=[{'name':'passed.png','path':'cypress/screenshots/passed.png','kind':'file'}])
+            if reference.endswith('.png'):
+                return dict(value,kind='image',image='data:image/png;base64,'+base64.b64encode((hub.ROOT/'docs'/'desktop-workspace.png').read_bytes()).decode())
+            if reference=='missing.log':raise ValueError('This file or folder no longer exists.')
+            return dict(value,kind='text',text='\n'.join('line '+str(i) for i in range(27,90)))
+        if path=='files/reveal':
+            assert body['project']==project and body['task']=='files-task'
+            return {'opened':body['path'],'selected':True}
         if path == 'checks': return body['config']
         if path == 'verify': return {'status':'passed','checks':[{'command':'python3 -m unittest','exit_code':0,'output':'Synthetic check result'}]}
         if path == 'queue': return {'paused':False,'tasks':[]}
@@ -522,8 +537,38 @@ def main():
             from desktop_features import open_browser_report
             report=open_browser_report(app,Gtk,api,project,'20261025-120000-1234abcd');settle(.3)
             capture(report,'desktop-browser-report.png');report.close()
+            # Real inline GTK link activation and read-only artifact navigation.
+            import reply_files
+            reply='Screenshots/logs are in cypress/screenshots/ and `.cypress-e2e.log`. See src/app.py:42 and missing.log.'
+            app.conversation_project=project;app.conversation='files-chat'
+            app.render_messages({'id':'files-chat','goal':'Review browser artifacts','total_turns':1,'turns':[{'rowid':1,'task':'files-task','request':'Run browser tests','result':reply,'file_references':reply_files.references(reply),'status':'completed'}]})
+            settle(.4)
+            link=next(w for w in descendants(app.chat_messages) if isinstance(w,Gtk.Label) and 'codehub-file:' in w.get_label())
+            capture(app.window,'desktop-file-links.png')
+            def file_button(name):
+                return next(w for w in descendants(app.file_window) if isinstance(w,Gtk.Button) and w.get_label()==name)
+            app.theme_switch.set_active(False)
+            link.emit('activate-link','codehub-file:1');settle(.5)
+            assert any(isinstance(w,Gtk.TextView) for w in descendants(app.file_window)), 'Log should render in a text preview'
+            file_button('Show in Files').emit('clicked');settle(.3)
+            assert any(p=='files/reveal' and b['path']==project+'/.cypress-e2e.log' for p,b in requests)
+            file_button('Copy path').emit('clicked');settle(.2)
+            capture(app.file_window,'desktop-file-log-light.png');app.file_window.close()
+            app.theme_switch.set_active(True)
+            link.emit('activate-link','codehub-file:2');settle(.5)
+            editor=next(w for w in descendants(app.file_window) if isinstance(w,Gtk.TextView))
+            assert editor.get_buffer().get_tag_table().lookup('requested-line') is not None
+            capture(app.file_window,'desktop-file-line-dark.png');app.file_window.close()
+            link.emit('activate-link','codehub-file:0');settle(.4)
+            file_button('passed.png').emit('clicked');settle(.5)
+            assert any(isinstance(w,Gtk.Picture) for w in descendants(app.file_window))
+            capture(app.file_window,'desktop-file-image.png');app.file_window.close()
+            link.emit('activate-link','codehub-file:3');settle(.4)
+            assert file_button('Copy reference').get_visible()
+            assert not app.error.get_visible(), app.error.get_text()
+            app.file_window.close()
             app.new_task();assert not app.browser_button.get_visible()
-            print(json.dumps({'rendered': 34, 'native_workflows': 'passed', 'provider_requests': 0}))
+            print(json.dumps({'rendered': 38, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

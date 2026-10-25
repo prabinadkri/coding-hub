@@ -1222,7 +1222,16 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     content.set_max_width_chars(56 if user else -1)
                     content.add_css_class('reply-text')
                     if not user and kind != 'code':
-                        content.set_markup('<span line_height="1.5">' + inline_markup(value) + '</span>')
+                        refs = (turn or {}).get('file_references', [])
+                        content.set_markup('<span line_height="1.5">' + inline_markup(value, refs) + '</span>')
+                        def activate_reference(label, uri, refs=refs, task=(turn or {}).get('task'), project=self.conversation_project):
+                            from desktop_files import open_reply_file
+                            if uri.startswith('codehub-file:'):
+                                try: reference = refs[int(uri.split(':', 1)[1])]['path']
+                                except (ValueError, IndexError): return True
+                                open_reply_file(self, Gtk, Gdk, GLib, api, project, task, reference)
+                            return True
+                        content.connect('activate-link', activate_reference)
                     if kind == 'heading':
                         content.add_css_class('reply-heading')
                     if kind == 'code':

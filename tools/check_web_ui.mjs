@@ -66,6 +66,37 @@ try {
   await page.getByRole('button',{name:'Apply this file',exact:true}).waitFor();
   assert.equal(fs.readFileSync(path.join(fixture.project,'source.py'),'utf8'),'answer = 1\n');
   await page.locator('#changes-close').click();
+  // Real saved replies -> folder, image, log, line reference, download, and missing-file UI.
+  await page.getByRole('button',{name:'Preview cypress/screenshots/',exact:true}).click();
+  await page.getByRole('button',{name:'passed.png',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.file-image')?.naturalWidth>0);
+  await page.screenshot({path:path.join(output,'reply-image.png')});
+  const imageDownload=page.waitForEvent('download');
+  await page.getByRole('button',{name:'Download',exact:true}).click();
+  const downloaded=await imageDownload;assert.equal(downloaded.suggestedFilename(),'passed.png');
+  assert.deepEqual(fs.readFileSync(await downloaded.path()),fs.readFileSync(path.join(fixture.project,'cypress/screenshots/passed.png')));
+  await page.getByRole('button',{name:'Parent folder',exact:true}).click();
+  await page.getByRole('button',{name:'passed.png',exact:true}).waitFor();
+  await page.locator('#features-close').click();
+  await page.getByRole('button',{name:'Preview .cypress-e2e.log',exact:true}).click();
+  await page.locator('[data-file-preview="text"]').getByText('All 12 browser checks passed',{exact:false}).waitFor();
+  const revealResponse=page.waitForResponse(r=>r.url().endsWith('/api/files/reveal'));
+  await page.getByRole('button',{name:'Show in Files',exact:true}).click();
+  assert.equal((await (await revealResponse).json()).opened,path.join(fixture.project,'.cypress-e2e.log'));
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
+  await page.getByRole('button',{name:'Copy path',exact:true}).click();
+  await page.waitForFunction(async expected=>(await navigator.clipboard.readText())===expected,path.join(fixture.project,'.cypress-e2e.log'));
+  await page.screenshot({path:path.join(output,'reply-log-light.png')});await page.locator('#features-close').click();
+  await page.locator('#theme-toggle').click();
+  await page.getByRole('button',{name:'Preview lines.py:42',exact:true}).click();
+  await page.locator('.file-line-highlight').getByText('line 42',{exact:false}).waitFor();
+  assert.ok(await page.locator('.file-line-highlight').evaluate(el=>el.nextElementSibling.getBoundingClientRect().top>=el.getBoundingClientRect().bottom-1),'The following line must start below the highlighted line');
+  await page.screenshot({path:path.join(output,'reply-line-dark.png')});await page.locator('#features-close').click();
+  await page.locator('#theme-toggle').click();
+  await page.getByRole('button',{name:'Preview missing.log',exact:true}).click();
+  await page.getByText('This file or folder no longer exists.',{exact:false}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Copy reference',exact:true}).isVisible(),true);
+  await page.locator('#features-close').click();
   // Real queued browser task: no URL, no steps, no model, and an existing unsent draft.
   await page.evaluate(async project=>api('checks',{project,config:{commands:[],timeout:180,repairs:0,browser:{url:'',steps:[]}}}),fixture.project);
   await page.locator('#prompt').fill('Keep this unsent draft');
@@ -73,7 +104,7 @@ try {
   await page.locator('.assistant .message-text').filter({hasText:'Browser checks passed.'}).waitFor({timeout:40000});
   assert.equal(await page.locator('#prompt').inputValue(),'Keep this unsent draft');
   await page.getByRole('button',{name:'Browser report',exact:true}).click();
-  await page.locator('#features-body img').first().waitFor();
+  await page.waitForFunction(()=>document.querySelector('#features-body img')?.naturalWidth>0);
   await page.getByText('2 page(s) checked at desktop/mobile sizes', {exact:false}).waitFor();
   await page.screenshot({path:path.join(output,'browser-chat-report.png')});
   const latest=await page.evaluate(async project=>(await api('checks?project='+encodeURIComponent(project))).browser_latest,fixture.project);
@@ -90,7 +121,7 @@ try {
   assert.ok(failed.console_errors.includes('fixture browser error'));assert.ok(failed.layout_errors.length>0);
   await assert.rejects(fetch(failed.url));
   assert.deepEqual(errors,[]);
-  console.log('Web UI passed: routes, checks, queue, apply/undo, themes, browser chat discovery, saved reports/screenshots, draft preservation, natural-language routing, real console/layout failures, server cleanup, no UI JS errors.');
+  console.log('Web UI passed: reply file previews/reveal/download, routes, checks, queue, apply/undo, themes, browser chat discovery, saved reports/screenshots, draft preservation, natural-language routing, real console/layout failures, server cleanup, no UI JS errors.');
 } catch(error) {
   if(context)await context.pages()[0]?.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});
   console.error(error);process.exitCode=1;

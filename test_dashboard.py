@@ -73,10 +73,30 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.request("/api/tasks", {"project": str(self.project), "prompt": "hello"}, token="wrong")[0], 401)
         self.assertEqual(self.request('/api/free-quota/refresh', {}, token='')[0], 401)
         self.assertEqual(self.manager.list(), [])
-        for endpoint in ('/api/projects', '/api/project', '/api/conversation', '/api/changes'):
+        for endpoint in ('/api/projects', '/api/project', '/api/conversation', '/api/changes', '/api/files/preview', '/api/files/download'):
             self.assertEqual(self.request(endpoint, token='')[0], 401)
         self.assertEqual(self.request('/api/conversation/delete', {}, token='')[0], 401)
         self.assertEqual(self.request('/api/project/delete', {}, token='')[0], 401)
+
+    def test_reply_file_endpoints_preview_download_and_authenticated_reveal(self):
+        from urllib.parse import urlencode
+        path=self.project/'browser.log';path.write_text('Checks passed')
+        query=urlencode({'project':str(self.project),'path':'browser.log'})
+        code,data=self.request('/api/files/preview?'+query)
+        self.assertEqual((code,data['text']),(200,'Checks passed'))
+        request=urllib.request.Request(self.url+'/api/files/download?'+query,headers={'X-CodeHub-Token':'test-token'})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.read(),b'Checks passed')
+            self.assertEqual(response.headers['X-Content-Type-Options'],'nosniff')
+        body={'project':str(self.project),'path':'browser.log'}
+        with patch('reply_files.reveal',return_value={'opened':str(path),'selected':True}) as reveal:
+            self.assertEqual(self.request('/api/files/reveal',body,token='')[0],401)
+            self.assertEqual(self.request('/api/files/reveal',body,origin='https://outside.example')[0],403)
+            reveal.assert_not_called()
+            self.assertEqual(self.request('/api/files/reveal',body)[0],200)
+            reveal.assert_called_once_with(str(self.project),'browser.log',None)
+        query=urlencode({'project':str(self.project),'path':'../private.txt'})
+        self.assertEqual(self.request('/api/files/preview?'+query)[0],400)
 
     def test_history_search_filters_pagination_and_archived_detail(self):
         for index in range(65):

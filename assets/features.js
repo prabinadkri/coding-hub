@@ -40,6 +40,45 @@ async function browserReport(project,identifier) {
   }catch(e){if(generation===featuresGeneration)body.append(featureElement('p',e.message));}
 }
 let featuresGeneration=0;
+async function openReplyFile(project,task,reference,offset=0){
+  const generation=++featuresGeneration,dialog=$('features-dialog'),body=$('features-body');
+  releaseBrowserImages();$('features-title').textContent='Files';body.replaceChildren(featureElement('p','Loading file preview…','subtle'));
+  if(!dialog.open)dialog.showModal();
+  try{
+    const params=new URLSearchParams({project,task:task||'',path:reference,offset});
+    const data=await api('files/preview?'+params);if(generation!==featuresGeneration)return;
+    $('features-title').textContent=data.name||'Files';body.replaceChildren(featureElement('p',data.path,'file-path'));
+    const actions=featureElement('div','','feature-actions');body.append(actions);
+    if(data.parent)actions.append(featureButton('Parent folder',()=>openReplyFile(project,task,data.parent)));
+    actions.append(featureButton('Show in Files',async()=>{await api('files/reveal',{project,task,path:data.path});toast('Opened in your file manager.');}),
+      featureButton('Copy path',async()=>{await navigator.clipboard.writeText(data.path);toast('Path copied.');}),
+      featureButton('Refresh',()=>openReplyFile(project,task,reference,offset)));
+    if(data.kind!=='folder'&&data.size<=20*1024*1024)actions.append(featureButton('Download',async()=>{
+      const response=await fetch('/api/files/download?'+new URLSearchParams({project,task:task||'',path:data.path}),{headers:{'X-CodeHub-Token':token}});
+      if(!response.ok)throw new Error((await response.json()).error||'Download failed.');
+      const url=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=url;link.download=data.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }));
+    if(data.note)body.append(featureElement('p',data.note,'subtle'));
+    if(data.kind==='folder'){
+      const list=featureElement('div','','file-list');body.append(list);
+      for(const entry of data.entries){const button=featureButton((entry.kind==='folder'?'▸ ':'')+entry.name,()=>openReplyFile(project,task,entry.path));button.classList.add('file-entry');button.title=entry.path;list.append(button);}
+      if(!data.entries.length)list.append(featureElement('p','This folder is empty or contains no previewable entries.','subtle'));
+      const pages=featureElement('div','','feature-actions');body.append(pages);
+      if(offset)pages.append(featureButton('Previous',()=>openReplyFile(project,task,reference,Math.max(0,offset-100))));
+      if(data.has_more)pages.append(featureButton('Next',()=>openReplyFile(project,task,reference,offset+100)));
+      if(data.scan_limited)body.append(featureElement('p','Showing a bounded listing. Use Show in Files to see all entries.','subtle'));
+    }else if(data.kind==='image'){
+      const img=document.createElement('img');img.src=data.image;img.alt=data.name;img.className='file-image';img.addEventListener('error',()=>{img.replaceWith(featureElement('p','This image could not be previewed. Use Show in Files or Download.'));});body.append(img);
+    }else if(data.kind==='text'){
+      if(data.truncated)body.append(featureElement('p','Preview is shortened. Download or Show in Files provides access to the full file.','subtle'));
+      if(data.first_line)body.append(featureElement('p','Starting at line '+data.first_line+(data.line?' · requested line '+data.line:''),'subtle'));
+      const pre=featureElement('pre','','file-text');pre.setAttribute('data-file-preview','text');
+      if(data.line&&data.first_line){data.text.split('\n').forEach((line,index)=>{const row=featureElement('span',line,index+data.first_line===data.line?'file-line-highlight':'');pre.append(row);});}
+      else pre.textContent=data.text;
+      body.append(pre);pre.querySelector('.file-line-highlight')?.scrollIntoView({block:'nearest'});
+    }
+  }catch(e){if(generation!==featuresGeneration)return;body.replaceChildren(featureElement('p',e.message),featureElement('p',reference,'file-path'),featureButton('Copy reference',()=>navigator.clipboard.writeText(reference)));}
+}
 async function workspaceFeature(name) {
   releaseBrowserImages();
   const generation=++featuresGeneration, dialog=$('features-dialog'),body=$('features-body');

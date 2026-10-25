@@ -17,6 +17,7 @@
 - `task_lock.py`: process-lifetime workspace locking and legacy stale-lock recovery.
 - `terminal_ui.py`: terminal commands, formatting, and progress presentation.
 - `system_diagnostics.py`: bounded, read-only host checks without model requests.
+- `reply_files.py`, `desktop_files.py`: local reply references, scoped file previews, folder navigation, and explicit file-manager reveal.
 - `message_format.py`: safe Markdown presentation for native and terminal replies.
 - `desktop.py`: native GTK 4 application and project/chat navigation.
 - `assets/desktop.css`: native GTK theme.
