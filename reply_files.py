@@ -8,10 +8,12 @@ import re
 import shutil
 import stat
 import subprocess
+import time
+from collections import deque
 from urllib.parse import unquote, urlsplit
 import hub
 
-EXTENSIONS = r'(?:log|txt|md|rst|json|jsonl|csv|tsv|yaml|yml|toml|ini|cfg|conf|xml|html|css|scss|js|jsx|ts|tsx|py|go|rs|java|c|h|cpp|cs|sh|sql|vue|svelte|png|jpe?g|gif|webp|pdf|zip|mp4)'
+EXTENSIONS = r'(?:log|txt|md|rst|json|jsonl|csv|tsv|yaml|yml|toml|ini|cfg|conf|xml|html|css|scss|js|jsx|ts|tsx|py|go|rs|java|c|h|cpp|cs|sh|sql|vue|svelte|png|jpe?g|gif|webp|svg|pdf|zip|tgz|gz|mp4|mov)'
 LOCATION = r'(?::\d+(?::\d+)?|#L\d+(?:-L\d+)?)?'
 # Start only at a token boundary so long dotted output cannot cause quadratic rescans.
 BOUNDARY = r'(?<![\w.@+~/-])'
@@ -23,6 +25,11 @@ SENSITIVE_NAMES = {'credentials', 'credentials.json', 'auth.json', 'oauth_creds.
 TEXT_LIMIT = 128 * 1024
 IMAGE_LIMIT = 8 * 1024 * 1024
 DOWNLOAD_LIMIT = 20 * 1024 * 1024
+PRODUCT_NAMES = {'next.js', 'node.js', 'vue.js', 'nuxt.js', 'socket.io', 'react.js', 'express.js', 'd3.js', 'three.js'}
+SEARCH_SKIP = SENSITIVE_DIRS | {'.hg', '.svn', 'node_modules', 'vendor', '.venv', 'venv', '__pycache__', '.next', '.nuxt', '.cache', 'dist', 'build', 'coverage'}
+SEARCH_DIRECTORIES = 600
+SEARCH_ENTRIES = 20000
+SEARCH_SECONDS = .8
 
 
 def split_location(value):
@@ -37,6 +44,10 @@ def looks_like_path(value, explicit=False):
     if value.startswith('file://'): return True
     if re.match(r'[A-Za-z][A-Za-z0-9+.-]*:', value) and not re.search(r':\d+(?::\d+)?$', value): return False
     path, _ = split_location(value)
+    if not path.strip('/') or path.lower() in PRODUCT_NAMES: return False
+    # Slash-prefixed web routes in test reports are not filesystem locations.
+    if path.startswith('/') and Path(path).parts[1:2] in [(p,) for p in ('auth', 'api', 'login', 'logout', 'dashboard', 'settings')]:
+        return False
     if re.match(r'^(?:python\d*|node|npm|npx|git|bash|sh|cat|cd)\s', path) or any(c in path for c in (';', '|', '$', '\n')): return False
     return bool(path.startswith(('/', './', '../', '~/')) or path.endswith('/') or re.search(r'\.'+EXTENSIONS+r'$', path, re.I) or (explicit and '/' in path))
 
@@ -104,6 +115,50 @@ def roots_for(project, task=None):
     return base, roots
 
 
+class ReferenceChoices(ValueError):
+    def __init__(self, reference, matches, root, line, limited=False):
+        self.reference, self.matches, self.root, self.line, self.limited = reference, matches, root, line, limited
+        super().__init__('Choose the intended file or folder using its full path:\n' + '\n'.join(str(p) for p in matches))
+
+
+def nested_matches(base, relative):
+    """Bounded lookup only after an exact relative path is missing; never follow links."""
+    pending = deque([(base, 0)])
+    matches = []
+    directories = entries = 0
+    limited = False
+    deadline = time.monotonic() + SEARCH_SECONDS
+    while pending:
+        if directories >= SEARCH_DIRECTORIES or entries >= SEARCH_ENTRIES or time.monotonic() >= deadline:
+            return matches, True
+        directory, depth = pending.popleft()
+        directories += 1
+        if directory != base:
+            candidate = directory / relative
+            try:
+                if candidate.exists() and candidate.resolve() == candidate and allowed_name(candidate):
+                    if candidate.is_file() or candidate.is_dir(): matches.append(candidate)
+            except OSError: pass
+            if len(matches) >= 20: return matches, True
+        try:
+            # Protect against a directory being replaced by a link during the lookup.
+            descriptor = open_fd(directory)
+            try:
+                with os.scandir(descriptor) as items:
+                    for item in items:
+                        entries += 1
+                        if entries >= SEARCH_ENTRIES or time.monotonic() >= deadline: return matches, True
+                        if item.name in SEARCH_SKIP or not allowed_name(item.name) or item.is_symlink(): continue
+                        try:
+                            if item.is_dir(follow_symlinks=False):
+                                if depth < 6: pending.append((directory / item.name, depth + 1))
+                                else: limited = True
+                        except OSError: continue
+            finally: os.close(descriptor)
+        except OSError: limited = True
+    return matches, limited
+
+
 def resolve(project, reference, task=None):
     if not isinstance(reference, str) or not reference or len(reference) > 4096 or any(ord(c) < 32 for c in reference):
         raise ValueError('Choose a local file or folder reference.')
@@ -119,14 +174,24 @@ def resolve(project, reference, task=None):
         raise ValueError('Choose a local path, not a URL or command.')
     base, roots = roots_for(project, task)
     path = Path(value).expanduser()
-    if not path.is_absolute(): path = base / path
+    relative = not path.is_absolute()
+    if relative: path = base / path
     path = Path(os.path.abspath(path))
     permitted = next((r for r in roots if path.is_relative_to(r)), None)
     if permitted is None: raise ValueError('This path is outside the project and this reply’s saved artifacts. Copy the path to open it manually.')
     if not allowed_name(path): raise ValueError('Credential and private configuration paths are not available in reply previews.')
     # Do not follow links into other projects or private files.
     if path.resolve() != path: raise ValueError('Symbolic links are not opened from replies. Open the original path in your file manager.')
-    if not path.exists(): raise ValueError('This file or folder no longer exists. It may have been moved or removed.')
+    if not path.exists():
+        # A tool can run from a package inside a monorepo and report package-relative paths.
+        # Explicit absolute paths and parent traversals must never be reinterpreted.
+        if relative and '..' not in Path(value).parts:
+            matches, limited = nested_matches(base, Path(value))
+            matches.sort(key=lambda p: str(p).casefold())
+            if len(matches) == 1 and not limited: path, permitted = matches[0], base
+            elif matches: raise ReferenceChoices(reference, matches, base, line, limited)
+            elif limited: raise ValueError('File not found in the bounded project search. Open the project folder or use the full path.')
+        if not path.exists(): raise ValueError('This file or folder no longer exists. It may have been moved or removed.')
     return path, line, permitted
 
 
@@ -146,7 +211,11 @@ def open_fd(path):
 
 
 def describe(project, reference, task=None, offset=0):
-    path, line, root = resolve(project, reference, task)
+    try: path, line, root = resolve(project, reference, task)
+    except ReferenceChoices as choices:
+        return {'kind': 'choices', 'name': 'Choose a file or folder', 'path': reference,
+                'note': 'Several project locations match this reference.' if not choices.limited else 'Project search was limited. Choose a matching location or open the project folder.',
+                'entries': [{'name': str(p.relative_to(choices.root)), 'path': str(p) + (':'+str(choices.line) if choices.line else '')} for p in choices.matches]}
     if type(offset) is not int or offset < 0 or offset > 2000: raise ValueError('Invalid folder page.')
     descriptor = open_fd(path)
     try:

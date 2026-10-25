@@ -27,10 +27,18 @@ def open_reply_file(app, Gtk, Gdk, GLib, api, project, task, reference):
         def failed(error):
             if state['closed'] or generation!=state['generation']:return
             clear();note(str(error));note(path)
+            body.append(app.button('Open project folder', lambda *_:load(project)))
+            body.append(app.button('Retry', lambda *_:load(path, offset)))
             body.append(app.button('Copy reference',lambda *_:Gdk.Display.get_default().get_clipboard().set(path)))
         def loaded(data):
             if state['closed'] or generation!=state['generation']:return
             clear();title.set_text(data['name'] or 'Files');note(data['path'])
+            if data['kind']=='choices':
+                note(data['note'])
+                for entry in data['entries']:
+                    body.append(app.button(entry['name'],lambda *_,e=entry:load(e['path'])))
+                body.append(app.button('Open project folder',lambda *_:load(project)))
+                return
             actions=app.row()
             if data.get('parent'):actions.append(app.button('Parent folder',lambda *_:load(data['parent'])))
             actions.append(app.button('Show in Files',lambda *_:app.background(

@@ -56,7 +56,12 @@ def blocks(text, with_languages=False):
 def inline_markup(text, references=None):
     references = references or []
     links = {item['raw']: (index, item) for index, item in enumerate(references)}
-    patterns = [re.escape(raw) for raw in sorted(links, key=len, reverse=True)] + [r'\*\*[^*\n]+\*\*', r'`[^`\n]+`']
+    def pattern(raw):
+        escaped = re.escape(raw)
+        return escaped if raw.startswith(('`', '[', '"', "'")) else r'(?<![\w./~@+\-])' + escaped + r'(?![\w@+:#\-]|\.[\w])'
+    # Consume complete web URLs/Markdown links first, so a filename elsewhere in the
+    # reply cannot accidentally create a local-file link inside them.
+    patterns = [r'https?://[^\s<>`]+', r'\[[^\]\n]+\]\(https?://[^)\n]+\)'] + [pattern(raw) for raw in sorted(links, key=len, reverse=True)] + [r'\*\*[^*\n]+\*\*', r'`[^`\n]+`']
     parts = re.split('(' + '|'.join(patterns) + ')', text)
     rendered = []
     for part in parts:

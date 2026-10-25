@@ -925,7 +925,10 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                     else:
                         value = reply_files.describe(memory.project, argument, task)
                         print(terminal_ui.safe_text(value['path']))
-                        if value['kind'] == 'folder':
+                        if value['kind'] == 'choices':
+                            for entry in value['entries']: print('  ' + terminal_ui.safe_text(entry['path']))
+                            print('Use /files with the intended full path.')
+                        elif value['kind'] == 'folder':
                             for entry in value['entries']: print('  ' + terminal_ui.safe_text(entry['name']) + ('/' if entry['kind']=='folder' else ''))
                             if value['has_more'] or value['scan_limited']: print('Listing shortened. Use /reveal PATH to see all entries.')
                         elif value['kind'] == 'text':

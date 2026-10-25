@@ -34,12 +34,14 @@ with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
             (working/'source.py').write_text('answer = 2\n')
     memory.record(conversation,folder.name,'Improve the answer','Preview ready.','completed')
     import reply_files
-    (project/'cypress'/'screenshots').mkdir(parents=True)
-    (project/'cypress'/'screenshots'/'passed.png').write_bytes((hub.ROOT/'docs'/'desktop-workspace.png').read_bytes())
-    (project/'.cypress-e2e.log').write_text('All 12 browser checks passed\n')
+    (project/'frontend'/'cypress'/'screenshots').mkdir(parents=True)
+    (project/'frontend'/'cypress'/'screenshots'/'passed.png').write_bytes((hub.ROOT/'docs'/'desktop-workspace.png').read_bytes())
+    (project/'frontend'/'.cypress-e2e.log').write_text('All 12 browser checks passed\n')
     (project/'lines.py').write_text('\n'.join('line '+str(i) for i in range(1,101)))
+    (project/'backend').mkdir()
+    for name in ['frontend','backend']:(project/name/'worker.log').write_text(name+' worker finished')
     memory.record(conversation,'files-task','Review test artifacts',
-        'Screenshots/logs are in cypress/screenshots/ and `.cypress-e2e.log`. See lines.py:42 and missing.log.', 'completed')
+        'Next.js served `/auth/login` and `/`. Screenshots/logs are in cypress/screenshots/ and `.cypress-e2e.log`. See lines.py:42 and missing.log. Also worker.log. Other names: https://example.com/worker.log and worker.log.bak.', 'completed')
     # Exercise authenticated reveal routing without opening the host file manager in CI.
     reply_files.reveal=lambda project,reference,task=None: {'opened':str(reply_files.resolve(project,reference,task)[0]),'selected':True}
     manager=dashboard.TaskManager(command_factory=lambda t: dashboard.TaskManager.command(t) if browser_checks.chat_request(t['prompt']) is not None else [sys.executable,'-u','-c','import time;print("Synthetic task");time.sleep(.4)'])

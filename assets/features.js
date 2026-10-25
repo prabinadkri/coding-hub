@@ -48,6 +48,12 @@ async function openReplyFile(project,task,reference,offset=0){
     const params=new URLSearchParams({project,task:task||'',path:reference,offset});
     const data=await api('files/preview?'+params);if(generation!==featuresGeneration)return;
     $('features-title').textContent=data.name||'Files';body.replaceChildren(featureElement('p',data.path,'file-path'));
+    if(data.kind==='choices'){
+      body.append(featureElement('p',data.note,'subtle'));
+      const list=featureElement('div','','file-list');body.append(list);
+      for(const entry of data.entries){const button=featureButton(entry.name,()=>openReplyFile(project,task,entry.path));button.classList.add('file-entry');list.append(button);}
+      body.append(featureButton('Open project folder',()=>openReplyFile(project,task,project)));return;
+    }
     const actions=featureElement('div','','feature-actions');body.append(actions);
     if(data.parent)actions.append(featureButton('Parent folder',()=>openReplyFile(project,task,data.parent)));
     actions.append(featureButton('Show in Files',async()=>{await api('files/reveal',{project,task,path:data.path});toast('Opened in your file manager.');}),
@@ -77,7 +83,7 @@ async function openReplyFile(project,task,reference,offset=0){
       else pre.textContent=data.text;
       body.append(pre);pre.querySelector('.file-line-highlight')?.scrollIntoView({block:'nearest'});
     }
-  }catch(e){if(generation!==featuresGeneration)return;body.replaceChildren(featureElement('p',e.message),featureElement('p',reference,'file-path'),featureButton('Copy reference',()=>navigator.clipboard.writeText(reference)));}
+  }catch(e){if(generation!==featuresGeneration)return;body.replaceChildren(featureElement('p',e.message),featureElement('p',reference,'file-path'),featureButton('Open project folder',()=>openReplyFile(project,task,project)),featureButton('Retry',()=>openReplyFile(project,task,reference,offset)),featureButton('Copy reference',()=>navigator.clipboard.writeText(reference)));}
 }
 async function workspaceFeature(name) {
   releaseBrowserImages();

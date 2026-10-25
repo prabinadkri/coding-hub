@@ -73,7 +73,9 @@ def main():
             import base64
             query=parse_qs(urlsplit(path).query);reference=query['path'][0]
             assert query['project']==[project] and query['task']==['files-task']
-            value={'name':Path(reference).name,'path':project+'/'+reference,'parent':None,'size':40,'first_line':27,'line':42,'note':'','truncated':False}
+            value={'name':Path(reference).name,'path':reference if reference.startswith('/') else project+'/'+reference,'parent':None,'size':40,'first_line':27,'line':42,'note':'','truncated':False}
+            if reference=='.cypress-e2e.log':
+                return dict(value,kind='choices',note='Several project locations match this reference.',entries=[{'name':'frontend/.cypress-e2e.log','path':project+'/frontend/.cypress-e2e.log'},{'name':'backend/.cypress-e2e.log','path':project+'/backend/.cypress-e2e.log'}])
             if reference=='cypress/screenshots/':
                 return dict(value,kind='folder',entries=[{'name':'passed.png','path':'cypress/screenshots/passed.png','kind':'file'}])
             if reference.endswith('.png'):
@@ -549,9 +551,11 @@ def main():
                 return next(w for w in descendants(app.file_window) if isinstance(w,Gtk.Button) and w.get_label()==name)
             app.theme_switch.set_active(False)
             link.emit('activate-link','codehub-file:1');settle(.5)
+            capture(app.file_window,'desktop-file-choice.png')
+            file_button('frontend/.cypress-e2e.log').emit('clicked');settle(.4)
             assert any(isinstance(w,Gtk.TextView) for w in descendants(app.file_window)), 'Log should render in a text preview'
             file_button('Show in Files').emit('clicked');settle(.3)
-            assert any(p=='files/reveal' and b['path']==project+'/.cypress-e2e.log' for p,b in requests)
+            assert any(p=='files/reveal' and b['path']==project+'/frontend/.cypress-e2e.log' for p,b in requests)
             file_button('Copy path').emit('clicked');settle(.2)
             capture(app.file_window,'desktop-file-log-light.png');app.file_window.close()
             app.theme_switch.set_active(True)
@@ -568,7 +572,7 @@ def main():
             assert not app.error.get_visible(), app.error.get_text()
             app.file_window.close()
             app.new_task();assert not app.browser_button.get_visible()
-            print(json.dumps({'rendered': 38, 'native_workflows': 'passed', 'provider_requests': 0}))
+            print(json.dumps({'rendered': 39, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

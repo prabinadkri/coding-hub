@@ -43,6 +43,57 @@ class ReplyFilesTests(unittest.TestCase):
         self.assertEqual(len(files.references('a.py '*100)),1)
         self.assertEqual(len(files.references(' '.join(f'a{i}.py' for i in range(80)))),40)
 
+    def test_reports_do_not_link_product_names_web_routes_or_slash_punctuation(self):
+        text='Started Next.js, Node.js, Socket.io; `/auth/login` and `/api/health` returned 200, `/` redirected. Docs / plans. See `frontend/` and `result.log`.'
+        self.assertEqual([r['path'] for r in files.references(text)],['frontend/','result.log'])
+        self.assertEqual(files.references('//'),[])
+        rendered=inline_markup('Read a.py and https://site/a.py and [a.py](https://site/a.py) and a.pyc',files.references('a.py'))
+        self.assertEqual(rendered.count('href="codehub-file:'),1)
+        self.assertEqual(inline_markup('See a.py.',files.references('a.py')).count('href="codehub-file:'),1)
+
+    def test_package_relative_artifacts_resolve_only_inside_this_project(self):
+        nested=self.project/'frontend';nested.mkdir()
+        (self.project/'cypress').rename(nested/'cypress')
+        (self.project/'.cypress-e2e.log').rename(nested/'.cypress-e2e.log')
+        folder=files.describe(self.project,'cypress/screenshots/','files-task')
+        self.assertEqual(folder['path'],str(nested/'cypress/screenshots'))
+        self.assertIn('12 browser checks',files.describe(self.project,'.cypress-e2e.log','files-task')['text'])
+        self.assertEqual(files.download(self.project,'.cypress-e2e.log','files-task'),(nested/'.cypress-e2e.log').read_bytes())
+        with self.assertRaises(ValueError):files.describe(self.project,str(self.project/'.cypress-e2e.log'),'files-task')
+        # Exact project paths still take precedence over nested names.
+        (self.project/'.cypress-e2e.log').write_text('Root log')
+        self.assertEqual(files.describe(self.project,'.cypress-e2e.log')['text'],'Root log')
+
+    def test_ambiguous_matches_require_selection_and_keep_line_locations(self):
+        for name in ['frontend','backend']:
+            directory=self.project/name;directory.mkdir();(directory/'check.log').write_text('one\ntwo\n')
+        value=files.describe(self.project,'check.log:2','files-task')
+        self.assertEqual(value['kind'],'choices');self.assertEqual(len(value['entries']),2)
+        self.assertEqual(value['entries'][0]['name'],'backend/check.log')
+        chosen=files.describe(self.project,value['entries'][0]['path'],'files-task')
+        self.assertEqual(chosen['line'],2);self.assertEqual(chosen['kind'],'text')
+        with self.assertRaises(files.ReferenceChoices):files.download(self.project,'check.log','files-task')
+        with patch.object(files.subprocess,'run') as run,self.assertRaises(files.ReferenceChoices):files.reveal(self.project,'check.log','files-task')
+        run.assert_not_called()
+
+    def test_nested_search_ignores_dependencies_links_and_private_paths_and_is_bounded(self):
+        outside=self.root/'outside';outside.mkdir();(outside/'private.log').write_text('private')
+        (self.project/'alias').symlink_to(outside,target_is_directory=True)
+        for name in ['node_modules','.git','.ssh']:
+            directory=self.project/name;directory.mkdir();(directory/'private.log').write_text('private')
+        with self.assertRaises(ValueError):files.describe(self.project,'private.log')
+        with patch.object(files,'SEARCH_ENTRIES',1),self.assertRaisesRegex(ValueError,'bounded'):files.describe(self.project,'unavailable.log')
+        with patch.object(files,'nested_matches',return_value=([self.project/'.cypress-e2e.log'],True)):
+            self.assertEqual(files.describe(self.project,'check.log')['kind'],'choices')
+
+    def test_preview_nested_lookup_never_falls_back_to_original_workspace(self):
+        import workspace_changes
+        folder=hub.private_dir(hub.STATE/'tasks'/'files-task')
+        with contextlib.redirect_stdout(io.StringIO()),workspace_changes.session(self.project,folder,True,True) as working:
+            (working/'frontend').mkdir();(working/'frontend'/'preview.log').write_text('Preview')
+        (self.project/'frontend').mkdir();(self.project/'frontend'/'preview.log').write_text('Original')
+        self.assertEqual(files.describe(self.project,'preview.log','files-task')['text'],'Preview')
+
     def test_long_dotted_output_is_bounded_and_home_paths_keep_their_prefix(self):
         self.assertEqual(files.references('a.'*30000),[])
         self.assertEqual(files.references('a/'*30000),[])

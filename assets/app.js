@@ -218,7 +218,8 @@ $('init-rules').addEventListener('click',async()=>{if(!memoryProject)return;try{
 function renderMessageText(target,text,files=null){
   const refs=files?.references||[],byRaw=new Map(refs.map(r=>[r.raw,r]));
   const escape=value=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  const tokens=new RegExp('('+[...refs.map(r=>r.raw).sort((a,b)=>b.length-a.length).map(escape),'\\*\\*[^*\\n]+\\*\\*','`[^`\\n]+`'].join('|')+')','g');
+  const pattern=raw=>['`','[','"',"'"].includes(raw[0])?escape(raw):'(?<![\\w./~@+\\-])'+escape(raw)+'(?![\\w@+:#\\-]|\\.[\\w])';
+  const tokens=new RegExp('('+['https?://[^\\s<>`]+','\\[[^\\]\\n]+\\]\\(https?://[^)\\n]+\\)',...refs.map(r=>r.raw).sort((a,b)=>b.length-a.length).map(pattern),'\\*\\*[^*\\n]+\\*\\*','`[^`\\n]+`'].join('|')+')','g');
   function inline(node,value){value.split(tokens).forEach(part=>{
     let el;const ref=byRaw.get(part);
     if(ref){el=document.createElement('button');el.type='button';el.className='file-reference';el.textContent=ref.label;el.title='Preview '+ref.path;el.setAttribute('aria-label','Preview '+ref.label);el.addEventListener('click',()=>openReplyFile(files.project,files.task,ref.path));}

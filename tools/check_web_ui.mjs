@@ -67,6 +67,10 @@ try {
   assert.equal(fs.readFileSync(path.join(fixture.project,'source.py'),'utf8'),'answer = 1\n');
   await page.locator('#changes-close').click();
   // Real saved replies -> folder, image, log, line reference, download, and missing-file UI.
+  assert.equal(await page.getByRole('button',{name:'Preview Next.js',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Preview /auth/login',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Preview /',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Preview worker.log',exact:true}).count(),1);
   await page.getByRole('button',{name:'Preview cypress/screenshots/',exact:true}).click();
   await page.getByRole('button',{name:'passed.png',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.file-image')?.naturalWidth>0);
@@ -74,7 +78,7 @@ try {
   const imageDownload=page.waitForEvent('download');
   await page.getByRole('button',{name:'Download',exact:true}).click();
   const downloaded=await imageDownload;assert.equal(downloaded.suggestedFilename(),'passed.png');
-  assert.deepEqual(fs.readFileSync(await downloaded.path()),fs.readFileSync(path.join(fixture.project,'cypress/screenshots/passed.png')));
+  assert.deepEqual(fs.readFileSync(await downloaded.path()),fs.readFileSync(path.join(fixture.project,'frontend/cypress/screenshots/passed.png')));
   await page.getByRole('button',{name:'Parent folder',exact:true}).click();
   await page.getByRole('button',{name:'passed.png',exact:true}).waitFor();
   await page.locator('#features-close').click();
@@ -82,10 +86,10 @@ try {
   await page.locator('[data-file-preview="text"]').getByText('All 12 browser checks passed',{exact:false}).waitFor();
   const revealResponse=page.waitForResponse(r=>r.url().endsWith('/api/files/reveal'));
   await page.getByRole('button',{name:'Show in Files',exact:true}).click();
-  assert.equal((await (await revealResponse).json()).opened,path.join(fixture.project,'.cypress-e2e.log'));
+  assert.equal((await (await revealResponse).json()).opened,path.join(fixture.project,'frontend/.cypress-e2e.log'));
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   await page.getByRole('button',{name:'Copy path',exact:true}).click();
-  await page.waitForFunction(async expected=>(await navigator.clipboard.readText())===expected,path.join(fixture.project,'.cypress-e2e.log'));
+  await page.waitForFunction(async expected=>(await navigator.clipboard.readText())===expected,path.join(fixture.project,'frontend/.cypress-e2e.log'));
   await page.screenshot({path:path.join(output,'reply-log-light.png')});await page.locator('#features-close').click();
   await page.locator('#theme-toggle').click();
   await page.getByRole('button',{name:'Preview lines.py:42',exact:true}).click();
@@ -96,6 +100,13 @@ try {
   await page.getByRole('button',{name:'Preview missing.log',exact:true}).click();
   await page.getByText('This file or folder no longer exists.',{exact:false}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Copy reference',exact:true}).isVisible(),true);
+  await page.locator('#features-close').click();
+  await page.getByRole('button',{name:'Preview worker.log',exact:true}).click();
+  await page.getByText('Several project locations match this reference.',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Show in Files',exact:true}).count(),0);
+  await page.screenshot({path:path.join(output,'reply-choose-location.png')});
+  await page.getByRole('button',{name:'backend/worker.log',exact:true}).click();
+  await page.locator('[data-file-preview="text"]').getByText('backend worker finished',{exact:true}).waitFor();
   await page.locator('#features-close').click();
   // Real queued browser task: no URL, no steps, no model, and an existing unsent draft.
   await page.evaluate(async project=>api('checks',{project,config:{commands:[],timeout:180,repairs:0,browser:{url:'',steps:[]}}}),fixture.project);
