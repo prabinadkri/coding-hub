@@ -76,10 +76,26 @@ class TaskManager:
         self.command_factory = command_factory or self.command
         self.dispatched = None
         self.paused = False
+        self.pause_preference = False
         self.closing = False
-        for path in sorted(self.directory.glob("*.json"), reverse=True)[:100]:
+        self.pending_path = self.directory.with_name(self.directory.name + '-queue.json')
+        paths = list(self.directory.glob('*.json'))
+        try:
+            control = json.loads(self.pending_path.read_text())
+            pending = {name for name in control['pending'] if isinstance(name,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,100}',name)}
+            self.paused = self.pause_preference = control.get('paused') is True
+            # History size must never evict waiting jobs from the startup cache.
+            paths = list(set(sorted(paths, key=lambda p:p.stat().st_mtime, reverse=True)[:100]) |
+                         {self.directory / (name + '.json') for name in pending})
+        except (OSError, ValueError, TypeError, KeyError):
+            pass  # One-time migration discovers pending jobs in older stores.
+        for path in paths:
             try:
+                if path.is_symlink() or path.stat().st_size > 256*1024:
+                    continue
                 item = json.loads(path.read_text())
+                if not isinstance(item,dict) or item.get('id') != path.stem or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',path.stem):
+                    continue
                 if item["status"] in ("running", "stopping"):
                     item.update(status="interrupted", ended_at=time.time())
                     hub.save_json(path, item)
@@ -87,6 +103,10 @@ class TaskManager:
                 if item["status"] == "queued": self.paused = True
             except (OSError, ValueError, KeyError, TypeError):
                 continue
+        recent = sorted(self.tasks.values(), key=lambda t:t.get('created_at',0), reverse=True)[:100]
+        keep = {t['id'] for t in recent} | {t['id'] for t in self.tasks.values() if t['status'] in ACTIVE}
+        self.tasks = {key:task for key,task in self.tasks.items() if key in keep}
+        self.persist_queue()
 
     @staticmethod
     def command(task):
@@ -106,6 +126,11 @@ class TaskManager:
 
     def persist(self, task):
         hub.save_json(self.directory / (task["id"] + ".json"), task)
+        self.persist_queue()
+
+    def persist_queue(self):
+        hub.save_json(self.pending_path, {'paused':self.pause_preference,
+            'pending':[task['id'] for task in self.tasks.values() if task['status'] in ACTIVE]})
 
     def list(self):
         with self.lock:
@@ -187,7 +212,7 @@ class TaskManager:
         with self.lock:
             action = data.get('action')
             if action in ('pause', 'resume'):
-                self.paused = action == 'pause'
+                self.paused = self.pause_preference = action == 'pause'
             elif action == 'move':
                 waiting = sorted((t for t in self.tasks.values() if t['status'] == 'queued' and t['id'] != self.dispatched), key=lambda t: t.get('queue_order', t['created_at']))
                 ids = [t['id'] for t in waiting]
@@ -200,6 +225,7 @@ class TaskManager:
                     self.persist(a); self.persist(b)
             else:
                 raise ValueError('Queue actions: pause, resume, move.')
+            self.persist_queue()
             self._schedule()
             return self.queue()
 

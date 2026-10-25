@@ -48,6 +48,15 @@ class WorkspaceFeaturesTests(unittest.TestCase):
         workspace_changes.change(self.project, folder.name, 'undo', ['main.py'])
         self.assertEqual((self.project / 'main.py').read_text(), 'user_uncommitted = 1\n')
 
+    def test_checkpoint_project_path_is_canonical_even_through_parent_alias(self):
+        alias=self.root/'alias';alias.symlink_to(self.project,target_is_directory=True)
+        folder=self.checkpoint()
+        with workspace_changes.session(alias,folder,True,True) as working:
+            (working/'added.py').write_text('added=True')
+        review=workspace_changes.change(alias,folder.name,'apply',['added.py'])
+        self.assertEqual(review['project'],str(self.project.resolve()))
+        self.assertEqual((self.project/'added.py').read_text(),'added=True')
+
     def test_conflicting_apply_is_all_or_nothing_and_undo_refuses_later_edits(self):
         (self.project / 'a.py').write_text('a=1'); (self.project / 'b.py').write_text('b=1')
         folder = self.checkpoint()

@@ -272,6 +272,24 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual((len(tasks),tasks[0]['mode']),(1,'preview'))
             self.assertEqual(queue_client.control('cancel',tasks[0]['id'])['status'],'canceled')
 
+    def test_large_history_cannot_hide_waiting_jobs_after_restart(self):
+        self.manager.control_queue({'action':'pause'})
+        queued=self.manager.start({'project':str(self.project),'prompt':'Keep this waiting job'})
+        for number in range(130):
+            task=dict(queued,id=f'old-history-{number}',status='completed',created_at=time.time()+number)
+            hub.save_json(self.manager.directory/(task['id']+'.json'),task)
+        restored=dashboard.TaskManager(self.manager.directory,self.manager.command_factory)
+        self.assertTrue(restored.paused)
+        self.assertEqual(restored.queue()['tasks'][0]['id'],queued['id'])
+        self.manager.stop(queued['id'])
+
+    def test_explicit_pause_survives_restart_even_when_queue_is_empty(self):
+        self.manager.control_queue({'action':'pause'})
+        restored=dashboard.TaskManager(self.manager.directory,self.manager.command_factory)
+        self.assertTrue(restored.paused)
+        restored.control_queue({'action':'resume'})
+        self.assertFalse(dashboard.TaskManager(self.manager.directory,self.manager.command_factory).paused)
+
     def test_invalid_task_parameters_do_not_launch_a_process(self):
         for extra in ({"backend": "paid"}, {"mode": "shell"}, {"quality": "unknown"}, {"prompt": ["bad"]}, {"project": "/no-such-directory-abc"}):
             self.assertEqual(self.request("/api/tasks", dict({"project": str(self.project), "prompt": "task"}, **extra))[0], 400)

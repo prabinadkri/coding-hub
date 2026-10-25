@@ -46,6 +46,7 @@ def text_snapshot(snapshot):
 
 @contextmanager
 def session(project, folder, enabled, preview=False):
+    project = Path(project).expanduser().resolve()
     if not enabled:
         yield project
         return
