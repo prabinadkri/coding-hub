@@ -18,7 +18,7 @@ from context_engine import ProjectMemory
 class BrowserChatTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.project = self.root / 'project'; self.project.mkdir()
         self.state = patch.object(hub, 'STATE', self.root / 'state'); self.state.start()
         self.output = contextlib.redirect_stdout(io.StringIO()); self.output.__enter__()
