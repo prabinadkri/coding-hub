@@ -28,14 +28,14 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.10.0"
+VERSION = "2.11.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
 
 def task_progress(task, output=''):
     state = task.get('status')
-    if state == 'queued': return {'label':'Preparing task…', 'detail':'Starting the agent in your project'}
+    if state == 'queued': return {'label':'Queued', 'detail':'Waiting for an available task slot; manage order in Task queue'}
     if state == 'stopping': return {'label':'Stopping…', 'detail':'Waiting for the agent to stop safely'}
     if state not in ACTIVE: return {'label':str(state or 'Ready').replace('_',' ').capitalize(), 'detail':'Task ended'}
     label, detail = 'Thinking / waiting for model…', 'Waiting for the next agent update'
@@ -43,9 +43,9 @@ def task_progress(task, output=''):
     names = {'read':'Read file', 'glob':'Find files', 'grep':'Search source', 'edit':'Edit file', 'write':'Write file', 'bash':'Run command'}
     for line in output.splitlines():
         if line.startswith('[Smart 1]'):
-            label, detail = 'Planning…', 'Antigravity is preparing the worker plan'
+            label, detail = 'Planning…', 'The selected manager is preparing the worker plan'
         elif line.startswith('[Smart review]'):
-            label, detail = 'Reviewing changes…', 'Antigravity is checking the worker’s evidence'
+            label, detail = 'Reviewing changes…', 'The selected manager is checking the worker’s evidence'
         elif line.startswith('[Smart parallel]') or re.match(r'^\[Smart worker \d+/\d+\]', line):
             label, detail = 'Workers running in parallel…', line.split(']', 1)[-1].strip()[:150]
         elif line.startswith('[Smart integration]'):
@@ -53,6 +53,8 @@ def task_progress(task, output=''):
             label, detail = 'Integrating and checking…', line.split(']', 1)[-1].strip()[:150]
         elif line.startswith('[Smart worker]') or re.match(r'^\[\d+\]',line):
             label, detail = 'Integrating and checking…' if integrating else 'Thinking / waiting for model…', line.split(']',1)[-1].strip()[:120]
+        elif line.startswith('[Verification') or line.startswith('[Local queue]'):
+            label, detail = 'Checking results…' if line.startswith('[Verification') else 'Waiting for local model…', line[:180]
         elif line.startswith('[tool] '):
             match = re.match(r'\[tool\] ([\w-]+) · (\w+)', line)
             if match:
@@ -72,13 +74,17 @@ class TaskManager:
         self.tasks = {}
         self.processes = {}
         self.command_factory = command_factory or self.command
+        self.dispatched = None
+        self.paused = False
+        self.closing = False
         for path in sorted(self.directory.glob("*.json"), reverse=True)[:100]:
             try:
                 item = json.loads(path.read_text())
-                if item["status"] in ACTIVE:
+                if item["status"] in ("running", "stopping"):
                     item.update(status="interrupted", ended_at=time.time())
                     hub.save_json(path, item)
                 self.tasks[item["id"]] = item
+                if item["status"] == "queued": self.paused = True
             except (OSError, ValueError, KeyError, TypeError):
                 continue
 
@@ -88,13 +94,13 @@ class TaskManager:
                 "--backend", task["backend"], "--quality", task["quality"]]
         if task.get('scope') == 'general':
             args[args.index('--project'):args.index('--project')+2] = ['--general']
-        if task["mode"] == "build":
-            args.append("--apply")
+        if task["mode"] in ("build", "preview"):
+            args.append("--preview" if task["mode"] == "preview" else "--apply")
         if task.get("conversation"):
             args.extend(["--conversation", task["conversation"]])
         if task.get('model'):
             args.extend(['--model', task['model']])
-        if task.get('backend') == 'smart':
+        if task.get('backend') in ('smart', 'smart-free'):
             args.extend(['--workers', str(task.get('workers', 1))])
         return args + ["--", task["prompt"]]
 
@@ -123,7 +129,9 @@ class TaskManager:
             return result
 
     def active(self):
-        return next((t for t in self.list() if t["status"] in ACTIVE), None)
+        with self.lock:
+            return next((dict(t) for t in self.tasks.values() if t['status'] in ('running', 'stopping')),
+                        next((dict(t) for t in self.tasks.values() if t['status'] == 'queued'), None))
 
     def delete_project(self, data):
         with self.lock:
@@ -146,33 +154,69 @@ class TaskManager:
         if not project.is_dir():
             raise ValueError("The project folder does not exist.")
         backend, quality, mode = data.get("backend", hub.DEFAULT_ROUTE), data.get("quality", "fast"), data.get("mode", "analysis")
-        if backend not in hub.ROUTES or quality not in ("fast", "deep") or mode not in ("analysis", "build"):
+        if backend not in hub.ROUTES or quality not in ("fast", "deep") or mode not in ("analysis", "build", "preview"):
             raise ValueError("Choose a valid route, quality and task mode.")
         model = hub.validate_model(backend, data.get('model'))
         workers = hub.validate_workers(backend, data.get('workers', 1))
-        if backend == "smart" and len(prompt.encode()) > 6000:
+        if backend in ("smart", "smart-free") and len(prompt.encode()) > 6000:
             raise ValueError("Smart requests are limited to 6,000 UTF-8 bytes. Split the task or choose a direct route.")
-        with self.lock, hub.project_lock(project):
-            if self.active():
-                raise RuntimeError("A task is already running. Stop it or wait for it to finish.")
+        if mode == 'preview' and hub.is_general(project):
+            raise ValueError('Preview mode requires a project folder.')
+        with self.lock:
+            if self.closing: raise RuntimeError('The server is shutting down.')
+            if sum(t['status'] == 'queued' for t in self.tasks.values()) >= 100:
+                raise ValueError('Queue limit reached. Finish or cancel waiting tasks first.')
             memory = ProjectMemory(project)
             conversation = memory.conversation(data.get("conversation"), prompt.strip())
             task = {"id": uuid.uuid4().hex, "prompt": prompt.strip(), "project": str(project), "scope": "general" if hub.is_general(project) else "project",
                     "conversation": conversation,
                     "backend": backend, "quality": quality, "mode": mode, "created_at": time.time(),
                     "model": model, "workers": workers,
-                    "started_at": None, "ended_at": None, "status": "queued", "exit_code": None}
+                    "started_at": None, "ended_at": None, "status": "queued", "exit_code": None,
+                    "queue_order": max((t.get("queue_order", 0) for t in self.tasks.values()), default=0) + 1}
             self.tasks[task["id"]] = task
             self.persist(task)
-            threading.Thread(target=self._run, args=(task,), daemon=True).start()
+            self._schedule()
             return dict(task)
+
+    def queue(self):
+        with self.lock:
+            return {'paused': self.paused, 'tasks': [dict(t) for t in sorted(self.tasks.values(), key=lambda t: t.get('queue_order', t['created_at'])) if t['status'] in ACTIVE]}
+
+    def control_queue(self, data):
+        with self.lock:
+            action = data.get('action')
+            if action in ('pause', 'resume'):
+                self.paused = action == 'pause'
+            elif action == 'move':
+                waiting = sorted((t for t in self.tasks.values() if t['status'] == 'queued' and t['id'] != self.dispatched), key=lambda t: t.get('queue_order', t['created_at']))
+                ids = [t['id'] for t in waiting]
+                if data.get('id') not in ids or data.get('direction') not in ('up', 'down'):
+                    raise ValueError('Choose a waiting task and up/down.')
+                i = ids.index(data['id']); j = i + (-1 if data['direction'] == 'up' else 1)
+                if 0 <= j < len(waiting):
+                    a, b = waiting[i], waiting[j]
+                    a['queue_order'], b['queue_order'] = b.get('queue_order', b['created_at']), a.get('queue_order', a['created_at'])
+                    self.persist(a); self.persist(b)
+            else:
+                raise ValueError('Queue actions: pause, resume, move.')
+            self._schedule()
+            return self.queue()
+
+    def _schedule(self):
+        if self.paused or self.closing or self.dispatched is not None:
+            return
+        waiting = sorted((t for t in self.tasks.values() if t['status'] == 'queued'), key=lambda t: t.get('queue_order', t['created_at']))
+        if waiting:
+            self.dispatched = waiting[0]['id']
+            threading.Thread(target=self._run, args=(waiting[0],), daemon=True).start()
 
     def _run(self, task):
         process = None
         path = self.directory / (task["id"] + ".log")
         try:
             with self.lock:
-                if task["status"] == "stopping":
+                if task["status"] in ("stopping", "canceled"):
                     task.update(status="canceled", ended_at=time.time())
                     self.persist(task)
                     return
@@ -190,7 +234,7 @@ class TaskManager:
                     log.flush()
             code = process.wait()
             with self.lock:
-                task["status"] = "canceled" if task["status"] == "stopping" or code in (130, 143, -2, -15) else "completed" if code == 0 else "needs_review" if task["backend"] == "smart" and code == 3 else "failed"
+                task["status"] = "canceled" if task["status"] == "stopping" or code in (130, 143, -2, -15) else "completed" if code == 0 else "needs_review" if code == 3 else "failed"
                 task["exit_code"] = code
         except Exception as error:
             with path.open("a") as log:
@@ -205,6 +249,8 @@ class TaskManager:
                 task["ended_at"] = time.time()
                 self.processes.pop(task["id"], None)
                 self.persist(task)
+                self.dispatched = None
+                self._schedule()
 
     def detail(self, identifier):
         with self.lock:
@@ -238,6 +284,10 @@ class TaskManager:
                 raise KeyError("Task not found.")
             if task["status"] not in ACTIVE:
                 return dict(task)
+            if task['status'] == 'queued' and task['id'] != self.dispatched:
+                task.update(status='canceled', ended_at=time.time())
+                self.persist(task)
+                return dict(task)
             task["status"] = "stopping"
             self.persist(task)
             process = self.processes.get(identifier)
@@ -247,7 +297,7 @@ class TaskManager:
 
     def close(self):
         for item in self.list():
-            if item["status"] in ACTIVE:
+            if item["status"] in ("running", "stopping"):
                 self.stop(item["id"])
 
 
@@ -351,6 +401,8 @@ class StatusCache:
             # Cloud catalog calls never hold up live local hardware sampling.
             # Executing a selected free model still verifies its price afresh.
             value.update(self.prices.get())
+            import local_resource
+            value['local_resource'] = local_resource.status()
             value.update(checking=False, local_ready=hub.LOCAL_AGENT_MODEL in value["models"], local_model=hub.LOCAL_AGENT_MODEL)
             with self.lock:
                 self.value, self.updated = value, time.monotonic()
@@ -421,6 +473,25 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed(parsed.path.startswith("/api/")):
             return
         try:
+            query = parse_qs(parsed.query)
+            if parsed.path == '/api/queue':
+                return self.reply(200, self.server.manager.queue())
+            if parsed.path == '/api/metrics':
+                import model_metrics
+                return self.reply(200, model_metrics.snapshot())
+            if parsed.path == '/api/checks':
+                from project_checks import profile
+                memory = ProjectMemory(query.get('project', [''])[0])
+                value = profile(memory.project)
+                latest = memory.directory / 'browser-latest.json'
+                return self.reply(200, dict(value, browser_latest=json.loads(latest.read_text()) if latest.is_file() else None))
+            if parsed.path == '/api/browser/artifact':
+                memory = ProjectMemory(query.get('project', [''])[0])
+                identifier, name = query.get('id', [''])[0], query.get('name', [''])[0]
+                if not re.fullmatch(r'[0-9]{8}-[0-9]{6}-[a-f0-9]{8}', identifier) or name not in ('trace.zip', 'final.png', 'failure.png', 'result.json'):
+                    raise ValueError('Choose a browser test artifact.')
+                path = memory.directory / 'browser-runs' / identifier / name
+                return self.reply(200, path.read_bytes(), mimetypes.guess_type(name)[0] or 'application/octet-stream')
             if parsed.path == "/api/health":
                 return self.reply(200, {"app": "coding-hub", "version": VERSION})
             if parsed.path == '/api/diagnostics':
@@ -468,7 +539,7 @@ class Handler(BaseHTTPRequestHandler):
                 children = sorted((p for p in folder.iterdir() if not p.name.startswith(".") and p.is_dir()), key=lambda p: p.name.lower())[:200]
                 return self.reply(200, {"path": str(folder), "parent": str(folder.parent),
                                         "folders": [{"name": p.name, "path": str(p)} for p in children]})
-            static = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}
+            static = {"/": "index.html", "/app.js": "app.js", "/features.js": "features.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}
             if parsed.path in static:
                 path = ASSETS / static[parsed.path]
                 return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream")
@@ -490,6 +561,26 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
+            if self.path == '/api/queue':
+                return self.reply(200, self.server.manager.control_queue(data))
+            if self.path == '/api/checks':
+                from project_checks import profile
+                project = Path(data.get('project', '')).expanduser().resolve()
+                with hub.project_lock(project):
+                    return self.reply(200, profile(project, data.get('config')))
+            if self.path == '/api/verify':
+                from project_checks import profile, run
+                project = Path(data.get('project', '')).expanduser().resolve()
+                with hub.project_lock(project):
+                    return self.reply(200, run(project, profile(project), hub.private_dir(hub.STATE / 'manual-checks' / uuid.uuid4().hex)))
+            if self.path == '/api/browser-test':
+                from browser_checks import run
+                project = Path(data.get('project', '')).expanduser().resolve()
+                with hub.project_lock(project):
+                    return self.reply(200, run(project))
+            if self.path == '/api/changes/action':
+                from workspace_changes import change
+                return self.reply(200, change(data.get('project', ''), data.get('task'), data.get('action'), data.get('files')))
             if self.path == "/api/tasks":
                 if self.server.accounts.session and self.server.accounts.session.snapshot()['running']:
                     raise RuntimeError('Finish or close account sign-in before sending a task.')
@@ -536,6 +627,9 @@ class Handler(BaseHTTPRequestHandler):
                     result = memory.initialize_rules()
                 return self.reply(200, result)
             if self.path == "/api/unload":
+                import local_resource
+                if local_resource.status().get("busy"):
+                    raise RuntimeError("The shared local model is in use. Wait for its current request to finish.")
                 if self.server.manager.active():
                     raise RuntimeError("Wait for the active task to finish before releasing memory.")
                 model = data.get('model') or hub.LOCAL_AGENT_MODEL

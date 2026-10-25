@@ -91,7 +91,7 @@ def launch(port=8765):
         request = urllib.request.Request(base + "/api/" + path,
             data=None if body is None else json.dumps(body).encode(), headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=12) as response:
+            with urllib.request.urlopen(request, timeout=4900 if path == 'verify' else 190 if path == 'browser-test' else 12) as response:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             with error:
@@ -112,7 +112,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
     from gi.repository import Pango
     routes = hub.ROUTES
     route_labels = {'free-auto': 'Free automatic', 'auto': 'Automatic', 'antigravity': 'Antigravity',
-                    'free': 'Free cloud', 'local': 'Local Qwen', 'smart': 'Smart',
+                    'free': 'Free cloud', 'local': 'Local Qwen', 'smart': 'Smart', 'smart-free': 'Free Smart',
                     'claude': 'Claude account', 'openai': 'ChatGPT account'}
 
     class CodingHub(Gtk.Application):
@@ -289,6 +289,11 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 button.set_child(row)
                 self.navigation[name] = button
                 (sidebar if name == 'workspace' else tools_box).append(button)
+            for name, title in (('checks', 'Project checks'), ('queue', 'Task queue'), ('metrics', 'Model observations')):
+                def open_feature(*_, name=name):
+                    from desktop_features import open_tool
+                    open_tool(self, Gtk, api, name)
+                tools_box.append(self.button(title, open_feature, 'nav-item'))
             project_heading = self.label('PROJECTS & CHATS', 'section')
             project_heading.set_margin_top(6)
             sidebar.append(project_heading)
@@ -431,6 +436,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             settings_body.append(self.workers_row)
             self.hint = self.label('', 'muted')
             settings_body.append(self.hint)
+            self.preview_edits = Gtk.CheckButton(label='Preview source edits before applying')
+            self.preview_edits.set_tooltip_text('Requires a project and edits enabled. Source copy only; external commands cannot be undone.')
+            settings_body.append(self.preview_edits)
             self.chat_settings = Gtk.Expander(label='Chat settings', expanded=True)
             self.chat_settings.set_child(settings_body)
             composer.append(self.chat_settings)
@@ -479,7 +487,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     self.chosen_models[draft.get('backend')] = draft['model']
                 self.quality.set_selected(1 if draft.get("quality") == "deep" else 0)
                 self.workers_picker.set_selected(max(0, min(2, int(draft.get('workers', 1)) - 1)))
-                self.edits.set_active(draft.get("mode") == "build")
+                self.edits.set_active(draft.get("mode") in ("build", "preview"))
+                self.preview_edits.set_active(draft.get("mode") == "preview")
             except (OSError, ValueError, TypeError):
                 self.project.set_text(str(Path.home() / "Documents"))
             self.sync_chat_layout()
@@ -509,7 +518,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                         self.error.set_visible(True)
                         self.connection.set_text('Connection needs attention')
                         self.refreshing = False
-                        self.run_button.set_sensitive(not any(t["status"] in dashboard.ACTIVE for t in self.tasks))
+                        self.run_button.set_sensitive(True)
                     return False
                 GLib.idle_add(finish)
             future.add_done_callback(done)
@@ -592,9 +601,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     "prompt": buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True),
                     "backend": routes[self.route.get_selected()],
                     "quality": "deep" if self.quality.get_selected() == 1 else "fast",
-                    "model": self.chosen_models.get(routes[self.route.get_selected()]) if routes[self.route.get_selected()] in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart') else None,
-                    "workers": self.workers_picker.get_selected() + 1 if routes[self.route.get_selected()] == 'smart' else 1,
-                    "mode": "build" if self.edits.get_active() else "analysis", "conversation": self.conversation}
+                    "model": self.chosen_models.get(routes[self.route.get_selected()]) if routes[self.route.get_selected()] in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart', 'smart-free') else None,
+                    "workers": self.workers_picker.get_selected() + 1 if routes[self.route.get_selected()] in ('smart', 'smart-free') else 1,
+                    "mode": ("preview" if self.preview_edits.get_active() else "build") if self.edits.get_active() else "analysis", "conversation": self.conversation}
 
         def current_project(self):
             return self.conversation_project if self.conversation else self.project.get_text()
@@ -647,6 +656,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     'antigravity': 'Uses your Google sign-in. Fast selects Flash; Deep selects Pro. Provider quotas apply.',
                     'free': 'Checks zero-cost pricing and retired-model status. Skips observed quota cooldowns; an explicitly chosen model lets you retry.',
                     'local': 'Qwen3 8B runs on this computer with 16K context. Best for focused tasks.',
+                    'smart-free': 'Verified free manager + free/local workers. At most 2 manager calls. Simple questions skip the manager. No subscription fallback.',
                     'smart': 'Antigravity plans and reviews; free/local workers implement. At most 2 bounded manager calls; savings are not guaranteed.',
                     'claude': 'Uses your separate Claude subscription. Connect in Accounts first; your plan limits apply.',
                     'openai': 'Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model.'
@@ -656,15 +666,15 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
 
         def render_model_picker(self):
             route = routes[self.route.get_selected()]
-            choices = self.model_choices.get('antigravity' if route == 'smart' else route, [])
+            choices = self.model_choices.get('antigravity' if route == 'smart' else 'free' if route == 'smart-free' else route, [])
             selected = self.chosen_models.get(route)
             if selected and not any(m['id'] == selected for m in choices):
                 choices = [{'id': selected, 'name': selected}] + choices
             keys = [None] + [m['id'] for m in choices]
             signature = (route, keys)
-            self.model_row.set_visible(route in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart'))
-            self.model_row.get_first_child().set_text('Manager model' if route == 'smart' else 'Model')
-            self.workers_row.set_visible(route == 'smart')
+            self.model_row.set_visible(route in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart', 'smart-free'))
+            self.model_row.get_first_child().set_text('Manager model' if route in ('smart', 'smart-free') else 'Model')
+            self.workers_row.set_visible(route in ('smart', 'smart-free'))
             self.quality.set_sensitive(route in ('auto', 'antigravity', 'smart') and not selected)
             if signature == self.model_signature:
                 return
@@ -755,7 +765,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.sync_chat_layout()
                 self.project.set_editable(False)
                 self.browse_button.set_sensitive(False)
-                self.prompt.get_buffer().set_text('')
+                if self.form()['prompt'] == data['prompt']:
+                    self.prompt.get_buffer().set_text('')
                 self.save_draft()
                 self.output_details.set_expanded(False)
                 self.show_task(task)
@@ -796,7 +807,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             box.append(self.history_search)
             filters = self.row(8)
             self.history_status = Gtk.DropDown.new_from_strings(['All statuses', 'In progress', 'Completed', 'Needs attention', 'Canceled'])
-            self.history_route = Gtk.DropDown.new_from_strings(['All routes', 'Auto', 'Smart', 'Antigravity', 'Free cloud', 'Local', 'Claude', 'ChatGPT', 'Free automatic'])
+            self.history_route = Gtk.DropDown.new_from_strings(['All routes', 'Auto', 'Smart', 'Antigravity', 'Free cloud', 'Local', 'Claude', 'ChatGPT', 'Free automatic', 'Free Smart'])
             for picker in (self.history_status, self.history_route):
                 picker.set_hexpand(True)
                 picker.connect('notify::selected', self.filter_history)
@@ -825,7 +836,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             if self.stack.get_visible_child_name() != 'history' or not hasattr(self, 'history_cards'):
                 return
             status = ('', 'active', 'completed', 'attention', 'canceled')[self.history_status.get_selected()]
-            route = ('', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai', 'free-auto')[self.history_route.get_selected()]
+            route = ('', 'auto', 'smart', 'antigravity', 'free', 'local', 'claude', 'openai', 'free-auto', 'smart-free')[self.history_route.get_selected()]
             query = self.history_search.get_text()
             signature = json.dumps([query, status, route, self.history_offset, [(t['id'], t['status']) for t in self.tasks], self.history_epoch])
             if signature == self.history_signature:
@@ -960,7 +971,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.render_models(status)
             self.render_accounts(status)
             self.connection.set_text('●  Connected locally')
-            self.run_button.set_sensitive(not any(t["status"] in dashboard.ACTIVE for t in self.tasks))
+            self.run_button.set_sensitive(True)
             if detail:
                 if self.selected is None and self.conversation and detail.get('conversation') == self.conversation and detail["status"] in dashboard.ACTIVE:
                     self.selected = detail["id"]
@@ -1340,7 +1351,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 heading = self.row(12)
                 title = self.label('Task changes', 'page-title'); title.set_hexpand(True)
                 heading.append(title); heading.append(self.button('Close', lambda *_: window.close())); body.append(heading)
-                files = review['files']
+                files = list(review['files'])
+                for name in review.get('recoverable', []):
+                    if not any(f['path'] == name for f in files):
+                        files.append({'path':name, 'status':'captured', 'added':0, 'removed':0, 'diff':'Binary or oversized file; full contents are in the private checkpoint.'})
+                if review.get('verification'):
+                    body.append(self.label('Independent checks: ' + review['verification']['status'], 'muted'))
                 body.append(self.label(str(len(files)) + ' files · +' + str(sum(f['added'] for f in files)) + ' −' + str(sum(f['removed'] for f in files)) + (' · Partial review' if review.get('limited') else ''), 'muted'))
                 body.append(self.label(review['note'] + (' Some files or diffs exceeded the review limits.' if review.get('limited') else ''), 'footnote'))
                 split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
@@ -1358,8 +1374,23 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True); scroll.set_child(diff); right.append(scroll)
                 right.append(self.button('Copy diff', lambda *_: Gdk.Display.get_default().get_clipboard().set(buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True))))
                 split.set_end_child(right); body.append(split)
+                recovery = self.row()
+                recovery_note = self.label('', 'muted')
+                selected_file = [None]
+                def recover(action):
+                    def done(_):
+                        window.close(); self.open_changes(task)
+                    self.background(lambda: api('changes/action', {'project':project, 'task':task, 'action':action, 'files':[selected_file[0]]}), done)
+                apply_file = self.button('Apply this file', lambda *_: recover('apply'))
+                undo_file = self.button('Undo this file', lambda *_: recover('undo'))
+                recovery.append(apply_file); recovery.append(undo_file); body.append(recovery); body.append(recovery_note)
+                apply_file.set_visible(False); undo_file.set_visible(False)
                 buttons = []
                 def select(file, index):
+                    selected_file[0] = file['path']
+                    applied = file['path'] in review.get('applied', [])
+                    apply_file.set_visible(bool(review.get('preview') and file['path'] in review.get('recoverable', []) and not applied))
+                    undo_file.set_visible(applied)
                     file_title.set_text(file['path']); buffer.set_text('')
                     for i, button in enumerate(buttons):
                         button.add_css_class('selected') if i == index else button.remove_css_class('selected')
@@ -1506,7 +1537,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 placement = self.loaded_model + ' · ' + (f"{round(loaded.get('size_vram', 0) / max(loaded.get('size', 1), 1) * 100)}% GPU · remainder on CPU" if loaded.get('size_vram') else 'CPU only')
             self.hardware_values['placement'].set_text(placement)
             self.hardware.set_text(('GPU acceleration in use' if loaded and loaded.get('size_vram') else 'Local model running on CPU') if loaded else ('GPU available · local model is sleeping' if gpu else 'Local inference uses CPU'))
-            self.release_button.set_sensitive(bool(loaded) and not any(t['status'] in dashboard.ACTIVE for t in self.tasks))
+            self.release_button.set_sensitive(bool(loaded) and not status.get('local_resource', {}).get('busy') and not any(t['status'] in dashboard.ACTIVE for t in self.tasks))
 
         def build_accounts_page(self):
             box = self.page_box('Accounts', 'accounts', 'Connect once. Continue your work here.')
@@ -1698,7 +1729,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     return
                 self.requirements.get_buffer().set_text(info['requirements'])
                 files = ', '.join(item['name'] for item in info.get('guidance_files', [])) or 'No project instruction file yet'
-                self.memory_stats.set_text(f"{Path(project).name} · Shared project memory\n{project}\n{info['indexed_files']} / {info['eligible_files']} source files indexed · {info['turns']} saved turns\n{files}")
+                self.memory_stats.set_text(f"{Path(project).name} · Shared project memory\n{project}\n{info['indexed_files']} / {info['eligible_files']} source files indexed · {info['turns']} saved turns\n{info.get('python_symbols', 0)} Python definitions in the symbol map · other languages use text retrieval\n{files}")
                 self.save_memory_button.set_sensitive(True)
                 self.init_memory_button.set_sensitive(True)
                 self.requirements.set_editable(True)

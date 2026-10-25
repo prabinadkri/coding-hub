@@ -9,7 +9,10 @@
 - `free_quota.py`: read-only OpenCode usage metadata, rate-limit observations, and expected UTC reset timing.
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
 - `accounts.py`: bounded native sign-in sessions, account metadata, and model catalogs.
-- `change_review.py`: bounded before/after source diffs and read-only task review.
+- `change_review.py`, `workspace_changes.py`: bounded diffs, private source checkpoints, conflict-checked apply/undo.
+- `project_checks.py`, `browser_checks.py`: independent command checks and optional Playwright flows.
+- `symbol_index.py`, `model_metrics.py`, `local_resource.py`: Python symbols, observed model results, and cooperative local inference scheduling.
+- `desktop_features.py`, `assets/features.js`: on-demand checks, queue and observations interfaces.
 - `task_lock.py`: process-lifetime workspace locking and legacy stale-lock recovery.
 - `terminal_ui.py`: terminal commands, formatting, and progress presentation.
 - `system_diagnostics.py`: bounded, read-only host checks without model requests.
@@ -23,7 +26,8 @@
 
 Run `python3 tools/check_all.py` for the combined local test workflow, logs, and native screenshots. Use `--no-gui` when GTK or a test display is unavailable.
 Run `python3 -m unittest discover -p 'test_*.py' -v` for the test suite.
-Run `node --check assets/app.js` after JavaScript changes.
+Run `node --check assets/app.js` and `node --check assets/features.js` after JavaScript changes.
+Run `npm run test:browser` for the real browser regression suite after installing optional Playwright development dependencies.
 Start the browser interface with `python3 hub.py web`.
 Start the native Linux interface with `python3 hub.py app`.
 

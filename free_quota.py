@@ -76,7 +76,33 @@ def limit_observation(error, observed):
             'kind': 'free_limit' if free_limit else 'rate_limit', 'source': 'OpenCode provider response (HTTP 429)'}
 
 
+def record_stream_limit(model):
+    """Some CLI versions retry silently before recording their error in SQLite."""
+    if model in hub.FREE_MODELS:
+        hub.save_json(hub.STATE / 'free-stream-limit.json', {'model': model, 'observed_at': time.time(),
+            'retry_at': None, 'kind': 'free_limit', 'source': 'Native OpenCode stream error; reset not reported'})
+
+
 def snapshot(path=None, now=None):
+    value = _snapshot(path, now)
+    if path is not None:
+        return value
+    try:
+        observation = json.loads((hub.STATE / 'free-stream-limit.json').read_text())
+        observed = observation['observed_at']
+        current = time.time() if now is None else now
+        latest = max((row.get('last_success_at', 0) for row in value['models']), default=0)
+        if isinstance(observed, (int,float)) and latest < observed <= current and current-observed < 7*86400:
+            for row in value['models']:
+                if row['id'] == observation.get('model') and observed > (row.get('observation') or {}).get('observed_at', 0):
+                    row.update(observation=observation, status='limit_observed')
+                    value['available'] = True
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return value
+
+
+def _snapshot(path=None, now=None):
     now = time.time() if now is None else now
     start = int(now // 86400) * 86400
     rows = [{'id': name, 'name': NAMES.get(name, name), 'remaining': None, 'limit': None,

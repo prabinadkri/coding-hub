@@ -52,3 +52,12 @@
 .history-filters{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 14px}.history-filters input{min-width:190px;flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font-size:13px}.history-filters select{padding:10px;font-size:12px;max-width:none;border:1px solid var(--line)}.history-pager{display:flex;align-items:center;gap:8px;margin-bottom:18px}.history-pager span{flex:1;font-size:12px;color:var(--muted)}.history-item h3{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.history-item>div{min-width:0}
 
 .history-filters select{background:var(--panel);color:var(--text)}
+/* On-demand workspace tools keep the conversation free of configuration cards. */
+#features-dialog{width:min(760px,94vw);max-height:88vh;overflow:auto}
+.feature-field{display:flex;flex-direction:column;gap:7px;margin:16px 0;font-size:13px;font-weight:600}
+.feature-field textarea,.feature-field input{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit;font:inherit;font-weight:400}
+.feature-field textarea{font-family:ui-monospace,monospace;resize:vertical;min-height:70px}
+.feature-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.feature-card{border-bottom:1px solid var(--line);padding:16px 0;overflow-wrap:anywhere}
+.feature-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:12px;line-height:1.6}
+.preview-choice{display:flex;align-items:center;gap:8px;font-size:12px;margin:12px 0}

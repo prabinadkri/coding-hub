@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -24,7 +25,7 @@ ROOT = Path(__file__).resolve().parent
 STATE = Path(os.environ.get("CODING_HUB_STATE", str(Path.home() / ".local/state/coding-hub")))
 FREE_MODELS = ("deepseek-v4.1-flash-free", "beam-free", "space-bunny-free", "longcat-2.5-preview-free", "big-pickle")
 DEFAULT_ROUTE = "free-auto"
-ROUTES = ("free-auto", "auto", "smart", "antigravity", "free", "local", "claude", "openai")
+ROUTES = ("free-auto", "auto", "smart", "smart-free", "antigravity", "free", "local", "claude", "openai")
 AGY_MODELS = {"fast": "gemini-3.8-flash-medium", "deep": "gemini-3.1-pro-high"}
 LOCAL_MODEL = "qwen3:8b"
 LOCAL_AGENT_MODEL = "coding-hub-qwen:8b"
@@ -98,7 +99,11 @@ def refresh_free_models():
     # Never use cached prices to authorize a cloud run. Unknown costs fail closed.
     catalog = get_json("https://models.dev/api.json")
     available = free_models(catalog)
-    save_json(STATE / "free-models.json", {"checked_at": time.time(), "models": available})
+    metadata = catalog.get('opencode', {}).get('models', {})
+    save_json(STATE / "free-models.json", {"checked_at": time.time(), "models": available,
+        "candidates": [{"model": name, "free": zero_cost(metadata.get(name, {})),
+                        "status": metadata.get(name, {}).get('status', 'unknown'),
+                        "cost": metadata.get(name, {}).get('cost')} for name in FREE_MODELS]})
     return available
 
 
@@ -204,6 +209,10 @@ def command(backend, model, prompt, apply=False, interactive=False, project=None
         return args + ([str(project)] if project else []) + ["--model", f"{'ollama' if backend == 'local' else 'opencode'}/{model}"]
     if backend == "local":
         prompt += "\n/no_think"
+    if backend == 'free':
+        # Expose provider stream failures that some CLI versions otherwise retry
+        # indefinitely without a JSON event. Normal diagnostics stay suppressed.
+        args += ['--print-logs', '--log-level', 'ERROR']
     provider = 'ollama' if backend == 'local' else 'openai' if backend == 'openai' else 'opencode'
     return args + ["run"] + (["--dir", str(project)] if project else []) + ["--format", "json", "--model",
                   f"{provider}/{model}", "--", prompt]
@@ -281,7 +290,7 @@ def classify_failure(code, text, structured_error=False):
     if code == 0 and not structured_error:
         return None
     lower = text.lower()
-    if any(term in lower for term in ("quota", "rate limit", "rate_limit", "429", "credits exhausted")):
+    if any(term in lower for term in ("quota", "rate limit", "rate_limit", "429", "credits exhausted", "free usage limit")):
         return "quota"
     if any(term in lower for term in ("authentication required", "authentication failed", "authentication timed out",
                                       "unauthorized", "not logged in", "401", "sign in", "failed to authenticate", "oauth session expired")):
@@ -290,8 +299,37 @@ def classify_failure(code, text, structured_error=False):
 
 
 def run_process(args, cwd, env, log, timeout=1200, render_reply=True, cancel_event=None, quiet=False):
+    try:
+        config = json.loads(env.get('OPENCODE_CONFIG_CONTENT', '{}'))
+    except ValueError:
+        config = {}
+    full_model = config.get('model', '')
+    local = full_model.startswith('ollama/')
+    from local_resource import lease
+    started = time.monotonic()
+    try:
+        with lease('Coding Hub · ' + Path(cwd).name, cancel_event, timeout) if local and os.name != 'nt' else contextlib.nullcontext():
+            result = _run_process(args, cwd, env, log, timeout, render_reply, cancel_event, quiet)
+    except (InterruptedError, KeyboardInterrupt):
+        return 130, 'Canceled while waiting for the local model.', False
+    except TimeoutError:
+        return 124, 'Timed out waiting for the local model.', False
+    if full_model:
+        try:
+            from model_metrics import record
+            provider, _, name = full_model.partition('/')
+            record('local' if local else 'free' if provider == 'opencode' else provider, name,
+                   time.monotonic()-started, classify_failure(*result) is None, Path(log).parent.name,
+                   'manager' if Path(log).name in ('smart-plan.log', 'smart-review.log') else 'worker')
+        except (OSError, sqlite3.Error):
+            pass
+    return result
+
+
+def _run_process(args, cwd, env, log, timeout=1200, render_reply=True, cancel_event=None, quiet=False):
     cwd = Path(cwd).resolve()
     error_event = False
+    quota_aborted = False
     chunks = []
     terminal = terminal_ui.interactive() and not quiet
     progress_label = "Thinking / waiting for model"
@@ -337,6 +375,22 @@ def run_process(args, cwd, env, log, timeout=1200, render_reply=True, cancel_eve
             for line in process.stdout:
                 output.write(line)
                 output.flush()
+                if re.match(r'^timestamp=\S+ level=ERROR ', line) and 'Free usage limit reached' in line and '--print-logs' in args:
+                    import free_quota
+                    try:
+                        selected_model = json.loads(env.get('OPENCODE_CONFIG_CONTENT', '{}')).get('model', '').removeprefix('opencode/')
+                        free_quota.record_stream_limit(selected_model)
+                    except (OSError, ValueError):
+                        pass
+                    quota_aborted = error_event = True
+                    notice = 'Free usage limit reached. Stopped provider retries; reset time is not reported.'
+                    chunks.append(notice)
+                    if not quiet: print(notice, flush=True)
+                    stop_child()
+                    try: process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill() if os.name == 'nt' else os.killpg(process.pid, signal.SIGKILL)
+                    break
                 text, error = event_text(line)
                 error_event |= error
                 if text:
@@ -353,7 +407,7 @@ def run_process(args, cwd, env, log, timeout=1200, render_reply=True, cancel_eve
                             progress_label = (str(part.get('tool', 'Tool')).replace('_', ' ').capitalize() if tool_state in ('running','pending') else 'Thinking · ' + str(part.get('tool', 'tool')) + ' ' + tool_state)
                     elif not quiet:
                         print(text.rstrip(), flush=True)
-            code = process.wait()
+            code = 1 if quota_aborted else process.wait()
         stopped.set()
         thread.join(timeout=6)
         if terminal:
@@ -439,8 +493,8 @@ def task_prompt(request, prior, apply, general=False):
 
 
 def route_options(backend, quality):
-    if backend == "smart":
-        yield "smart", "Antigravity manager + free/local workers"
+    if backend in ("smart", "smart-free"):
+        yield backend, "Bounded manager + free/local workers"
         return
     # Verify free prices only if that route is reached. Local-only stays offline.
     choices = ("free", "local") if backend == "free-auto" else ("antigravity", "free", "local") if backend == "auto" else (backend,)
@@ -460,7 +514,7 @@ def validate_model(backend, model):
         if backend == 'openai':
             raise ValueError('Choose a ChatGPT model in Chat settings before sending.')
         return None
-    if backend not in ('antigravity', 'openai', 'claude', 'free', 'local', 'smart') or not isinstance(model, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}', model):
+    if backend not in ('antigravity', 'openai', 'claude', 'free', 'local', 'smart', 'smart-free') or not isinstance(model, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}', model):
         raise ValueError('Choose a valid model for this route.')
     return model
 
@@ -468,7 +522,7 @@ def validate_model(backend, model):
 def model_choices(backend):
     if backend == 'local':
         return [{'id': name, 'name': name} for name in local_models()]
-    if backend == 'free':
+    if backend in ('free', 'smart-free'):
         return [{'id': name, 'name': name} for name in refresh_free_models()]
     if backend in ('auto', 'free-auto'):
         return []
@@ -491,12 +545,12 @@ def show_models(backend):
 def validate_workers(backend, workers):
     if type(workers) is not int or not 1 <= workers <= 3:
         raise ValueError('Choose 1, 2, or 3 Smart workers.')
-    if backend != 'smart' and workers != 1:
+    if backend not in ('smart', 'smart-free') and workers != 1:
         raise ValueError('Parallel workers are available only on the Smart route.')
     return workers
 
 
-def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=False, dry_run=False, conversation=None, resume=False, model=None, workers=1):
+def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=False, dry_run=False, conversation=None, resume=False, model=None, workers=1, preview=False):
     project = Path(project).expanduser().resolve()
     if not project.is_dir():
         raise ValueError(f"Project directory does not exist: {project}")
@@ -506,13 +560,16 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
     workers = validate_workers(backend, workers)
     requested_model = model
     general = is_general(project)
+    if preview and general:
+        raise ValueError('Preview is for project source changes; general system commands cannot be rolled back.')
+    apply = apply or preview
     if backend in ('claude', 'openai'):
         if not executable('claude' if backend == 'claude' else 'opencode'):
             raise ValueError('Install the provider CLI and connect it in Accounts first.')
         # Explicit direct routes only; they never enter the free/automatic fallback chain.
         routes = [(backend, model or ('opus' if quality == 'deep' else 'sonnet'))]
     elif model:
-        if backend == 'free' and model not in refresh_free_models():
+        if backend in ('free', 'smart-free') and model not in refresh_free_models():
             raise ValueError('This model is not currently verified as free. Choose another free model or use the route default.')
         if backend == 'local' and model not in local_models():
             raise ValueError('This Ollama model is not installed on this computer.')
@@ -535,10 +592,13 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
     print(f"\n{project.name} · {backend} · {'edits enabled' if apply else 'analysis only'}" if concise else f"Task {task_id} · {'coding with commands enabled' if apply else 'analysis only'}")
     if not concise:
         print(f"Project: {project}\nLogs: {folder}")
-    from change_review import capture
-    with project_lock(project), capture(project, folder, apply):
+    from workspace_changes import session
+    from project_checks import profile, run as run_checks, finish as finish_checks
+    config = profile(project)
+    original_project = project
+    with project_lock(project), session(project, folder, apply, preview) as working_project:
         from context_engine import ProjectMemory
-        memory = ProjectMemory(project)
+        memory = ProjectMemory(original_project)
         conversation = memory.conversation(conversation, request, resume)
         record["conversation"] = conversation
         indexed = memory.index()
@@ -546,10 +606,33 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
         if not concise:
             print(f"Conversation: {conversation}\nContext: {indexed['indexed_files']}/{indexed['eligible_files']} source files indexed; {len(context.encode())} bytes selected.", flush=True)
         save_json(folder / "context.json", {"conversation": conversation, "index": indexed, "context_bytes": len(context.encode())})
+        baseline = run_checks(working_project, config, folder, 'baseline') if apply and config['commands'] else None
+        if baseline and any(c['exit_code'] in (130, 143, -2, -15) for c in baseline['checks']):
+            memory.record(conversation, task_id, request, 'Canceled during baseline checks.', 'canceled')
+            return 130
+        project = working_project
+        def checked(text, code):
+            if code not in (0, 3) or not apply:
+                return text, code
+            result = finish_checks(project, request, config, folder, apply, baseline)
+            record['verification'] = result
+            from model_metrics import verified
+            verified(task_id, result['status'])
+            label = {'passed': 'Configured checks passed', 'failed': 'Configured checks failed', 'not_verified': 'Not independently verified: no project checks configured'}[result['status']]
+            text += '\n\n' + label + '.'
+            if preview:
+                text += ' Changes are in a preview copy; review and apply selected files.'
+            return text, 130 if any(c['exit_code'] in (130, 143, -2, -15) for c in result['checks']) else 3 if result['status'] == 'failed' else code
         output = ""
-        if backend == "smart":
+        if backend in ("smart", "smart-free"):
             from smart_route import execute
-            result = execute(project, request, quality, apply, context, folder, model=model, workers=workers)
+            options = {'manager_backend': 'free'} if backend == 'smart-free' else {}
+            result = execute(project, request, quality, apply, context, folder, model=model, workers=workers, **options)
+            result['output'], result['code'] = checked(result['output'], result['code'])
+            if result['code'] == 3: result['status'] = 'needs_review'
+            if result['code'] == 130: result['status'] = 'canceled'
+            result['report'].update(reply=result['output'], status=result['status'], verification=record.get('verification'))
+            save_json(folder / 'smart.json', result['report'])
             record.update(status=result["status"], smart=result["report"])
             save_json(folder / "task.json", record)
             memory.record(conversation, task_id, request, result["output"], result["status"])
@@ -576,14 +659,15 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
             attempt = {"backend": route, "model": model, "exit_code": code, "failure": failure, "log": str(log)}
             record["attempts"].append(attempt)
             if failure is None:
-                memory.record(conversation, task_id, request, saved_response, "completed")
-                record["status"] = "agent_completed"
+                saved_response, checked_code = checked(saved_response, 0)
+                record['status'] = 'needs_review' if checked_code == 3 else 'canceled' if checked_code == 130 else 'agent_completed'
+                memory.record(conversation, task_id, request, saved_response, 'completed' if checked_code == 0 else record['status'])
             elif failure == "canceled":
                 record["status"] = "canceled"
             save_json(folder / "task.json", record)
             if failure is None:
                 print("\nFinished · review changes and checks." if concise else "\nAgent completed. Review its changes and validation report.")
-                return 0
+                return checked_code
             if failure in ("canceled", "timeout"):
                 memory.record(conversation, task_id, request, saved_response, failure)
                 record["status"] = failure
@@ -721,6 +805,7 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
     except ImportError:
         readline = None
     diagnostic_context = None
+    preview = False
     try:
         if conversation:
             recent = memory.messages(conversation, limit=1)
@@ -745,9 +830,14 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                 if name == '/help': terminal_ui.help_text(); continue
                 if name == '/status': terminal_ui.banner('General tasks' if is_general(memory.project) else memory.project, backend, model, apply); continue
                 if name == '/models': show_models(backend); continue
+                if name == '/queue':
+                    from queue_client import control
+                    fields=argument.split()
+                    print(json.dumps(control(fields[0] if fields else 'list', fields[1] if len(fields)>1 else None), indent=2))
+                    continue
                 if name == '/workers':
-                    if backend != 'smart':
-                        print('Choose /route smart first.'); continue
+                    if backend not in ('smart', 'smart-free'):
+                        print('Choose /route smart-free or smart first.'); continue
                     if not argument:
                         print(f'Smart workers: up to {workers}. Use /workers 1, 2, or 3. Local inference stays serial.'); continue
                     workers = validate_workers('smart', int(argument))
@@ -769,14 +859,14 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                     terminal_ui.banner('General tasks' if is_general(memory.project) else memory.project, backend, model, apply)
                     continue
                 if name == '/mode':
-                    if argument not in ('analysis','build'):
-                        print('Mode: ' + ('build' if apply else 'analysis') + '. Use /mode analysis or /mode build.'); continue
-                    apply = argument == 'build'
+                    if argument not in ('analysis','build','preview'):
+                        print('Mode: ' + ('build' if apply else 'analysis') + '. Use /mode analysis, build, or preview.'); continue
+                    apply, preview = argument in ('build', 'preview'), argument == 'preview'
                     print('Commands and requested changes enabled.' if apply else 'Analysis mode; no command execution.')
                     continue
                 if name == '/edit':
                     if argument not in ('on','off'): print('Use /edit on or /edit off.'); continue
-                    apply = argument == 'on'
+                    apply, preview = argument == 'on', False
                     print('Edits and commands enabled.' if apply else 'Analysis only; edits and commands disabled.'); continue
                 if name == '/new':
                     conversation = None
@@ -810,6 +900,30 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                 if name == '/changes':
                     from change_review import show
                     show(memory.project); continue
+                if name in ('/checks', '/verify', '/browser-test', '/metrics', '/apply', '/undo'):
+                    from project_checks import profile, run as run_checks
+                    if name == '/checks':
+                        value = profile(memory.project)
+                        if argument:
+                            value['commands'] = [] if argument == 'clear' else [argument]
+                            value = profile(memory.project, value)
+                        print(json.dumps(value, indent=2))
+                    elif name == '/verify':
+                        with project_lock(memory.project):
+                            print(json.dumps(run_checks(memory.project, profile(memory.project), private_dir(STATE / 'manual-checks' / uuid.uuid4().hex)), indent=2))
+                    elif name == '/browser-test':
+                        from browser_checks import run
+                        print(json.dumps(run(memory.project), indent=2))
+                    elif name == '/metrics':
+                        from model_metrics import snapshot
+                        print(json.dumps(snapshot(), indent=2))
+                    else:
+                        import shlex
+                        from workspace_changes import change
+                        fields = shlex.split(argument)
+                        if len(fields) < 2: raise ValueError('Use /apply TASK_ID file1 [file2], or /undo TASK_ID file1 [file2].')
+                        print(json.dumps(change(memory.project, fields[0], name[1:], fields[1:]), indent=2))
+                    continue
                 if name == '/memory': terminal_ui.memory_text(memory.info()); continue
                 if name == '/paste':
                     print('Paste your message. Finish with a single . on its own line; /cancel discards it.')
@@ -830,7 +944,7 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                 if diagnostic_context:
                     request += '\n\nRead-only system snapshot:\n' + diagnostic_context
                     diagnostic_context = None
-                code = run_task(memory.project, request, backend, quality, apply, conversation=conversation, model=model, workers=workers if backend == "smart" else 1)
+                code = run_task(memory.project, request, backend, quality, apply, conversation=conversation, model=model, workers=workers if backend in ("smart", "smart-free") else 1, preview=preview)
                 if apply: print(terminal_ui.style('  /changes review files   /memory project instructions   /help commands', '2'))
                 if code == 130: print('Task canceled. You can continue this conversation.')
             except (EOFError, KeyboardInterrupt):
@@ -854,8 +968,22 @@ def main():
     changes.add_argument('--project', default=os.getcwd())
     changes.add_argument('--task', help='Task ID; defaults to the latest saved task')
     sub.add_parser("setup")
+    sub.add_parser('metrics', help='Observed model reliability and availability')
+    queue = sub.add_parser('queue', help='Inspect/control the app and web task queue')
+    queue.add_argument('operation', nargs='?', choices=('list','pause','resume','up','down','cancel'), default='list')
+    queue.add_argument('identifier', nargs='?')
+    for action in ('checks', 'verify', 'browser-test', 'apply', 'undo'):
+        item = sub.add_parser(action)
+        item.add_argument('--project', default=os.getcwd())
+        if action == 'checks':
+            item.add_argument('--command', action='append', help='Replace check commands; repeat for multiple commands')
+            item.add_argument('--repairs', type=int, choices=(0,1,2))
+            item.add_argument('--config', help='Read complete check/browser configuration from JSON file')
+        if action in ('apply', 'undo'):
+            item.add_argument('--task', required=True)
+            item.add_argument('files', nargs='+')
     models = sub.add_parser('models', help='List model choices for a route')
-    models.add_argument('--backend', choices=('antigravity','free','local','claude','openai','smart'), default='local')
+    models.add_argument('--backend', choices=('antigravity','free','local','claude','openai','smart','smart-free'), default='local')
     login = sub.add_parser('login', help='Open a provider’s own sign-in flow')
     login.add_argument('--provider', choices=('antigravity','claude','openai'), required=True)
     login.add_argument('--reconnect', action='store_true', help='Sign out of Antigravity first and reconnect')
@@ -887,6 +1015,8 @@ def main():
         item.add_argument("--quality", choices=("fast", "deep"), default="fast")
         if name == "run":
             item.add_argument("--apply", action="store_true", help="Allow project edits and shell execution for this task")
+            item.add_argument("--preview", action="store_true", help="Edit a private source copy; apply selected files after review")
+            item.add_argument('--queue', action='store_true', help='Enqueue in the running app/web server and return immediately')
             item.add_argument("--dry-run", action="store_true")
             item.add_argument("--continue", dest="resume", action="store_true", help="Continue the latest conversation in this project")
             item.add_argument("--conversation", help="Continue a specific Coding Hub conversation ID")
@@ -897,6 +1027,30 @@ def main():
     args = parser.parse_args()
     if getattr(args, 'general', False):
         args.project = general_workspace()
+    if args.action == 'queue':
+        from queue_client import control
+        print(json.dumps(control(args.operation, args.identifier), indent=2)); return 0
+    if args.action == 'metrics':
+        from model_metrics import snapshot
+        print(json.dumps(snapshot(), indent=2)); return 0
+    if args.action in ('checks', 'verify', 'browser-test', 'apply', 'undo'):
+        from project_checks import profile, run as run_checks
+        if args.action == 'checks':
+            value = json.loads(Path(args.config).read_text()) if args.config else profile(args.project)
+            if args.command is not None: value['commands'] = args.command
+            if args.repairs is not None: value['repairs'] = args.repairs
+            result = profile(args.project, value)
+        elif args.action == 'verify':
+            with project_lock(args.project):
+                result = run_checks(args.project, profile(args.project), private_dir(STATE / 'manual-checks' / uuid.uuid4().hex))
+        elif args.action == 'browser-test':
+            from browser_checks import run
+            result = run(args.project)
+        else:
+            from workspace_changes import change
+            result = change(args.project, args.task, args.action, args.files)
+        print(json.dumps(result, indent=2))
+        return 1 if result.get('status') == 'failed' else 0
     if args.action == 'doctor':
         import system_diagnostics
         print(system_diagnostics.report()['text'])
@@ -952,7 +1106,17 @@ def main():
     if args.action == "setup":
         return subprocess.call([sys.executable, str(ROOT / "setup.py"), "--local"])
     if args.action == "run":
-        return run_task(args.project, args.task, args.backend, args.quality, args.apply, args.dry_run, args.conversation, args.resume, args.model, args.workers)
+        if args.queue and not args.dry_run:
+            from queue_client import request
+            from context_engine import ProjectMemory
+            conversation=args.conversation
+            if args.resume and not conversation: conversation=ProjectMemory(args.project).conversation(resume=True)
+            value=request('tasks', {'project':str(Path(args.project).expanduser().resolve()),
+                'scope':'general' if args.general else 'project', 'prompt':args.task, 'backend':args.backend,
+                'model':args.model, 'quality':args.quality, 'workers':args.workers, 'conversation':conversation,
+                'mode':'preview' if args.preview else 'build' if args.apply else 'analysis'})
+            print('Queued task ' + value['id'] + '. Use codehub queue or the app to follow it.'); return 0
+        return run_task(args.project, args.task, args.backend, args.quality, args.apply, args.dry_run, args.conversation, args.resume, args.model, args.workers, args.preview)
     if args.action == "chat":
         return chat(args.project, args.backend, args.quality, args.apply, args.resume, args.model, args.workers)
     if args.action == "open":

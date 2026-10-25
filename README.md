@@ -85,6 +85,7 @@ codehub models --backend free         # Fresh zero-price check
 codehub models --backend local        # Installed Ollama models
 codehub run --project ~/my-project --backend free --model big-pickle "Explain the tests"
 codehub run --project ~/my-project --apply "Fix the failing tests and run the relevant checks"
+codehub run --project ~/my-project --backend smart-free --preview "Implement the feature"
 codehub login --provider antigravity
 codehub login --provider claude
 codehub login --provider openai
@@ -96,7 +97,7 @@ Inside `codehub chat`:
 - `/paste` accepts a multiline message. Finish with a single `.` on its own line; `/cancel` discards it.
 - `/models` lists choices; `/model MODEL_ID` selects one; `/model default` restores the default.
 - `/workers 1`, `/workers 2`, or `/workers 3` sets the Smart maximum cloud workers for the same task. Local fallback remains one at a time. `/models` and `/model ID` on Smart select the Antigravity manager, including account-available Claude and Gemini models.
-- `/route free-auto` selects free cloud with local fallback. `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic and Smart are supported too.
+- `/route free-auto` selects free cloud with local fallback. `/route local`, `/route free`, `/route antigravity`, `/route claude`, or `/route openai` changes route. Automatic, Smart, and Free Smart are supported too.
 - `/project /path/to/folder` starts a project conversation; `/general` returns to standalone tasks.
 - `/mode analysis` explains only; `/mode build` enables commands and requested changes.
 - `/edit on` enables commands and requested changes; `/edit off` returns to analysis mode.
@@ -184,9 +185,74 @@ codehub open --backend free --project ~/my-project
 
 In the dashboard, **N** starts a new chat, and **Ctrl/Cmd + Enter** runs it. Native interactive agents keep their normal edit and command confirmation prompts.
 
+## Checks, previews, and recovery
+
+Open **Tools & settings → Project checks** in the app or browser. Set one trusted command per line, a timeout, and zero to two free repair attempts. Commands execute directly as arguments; use an explicit shell such as `bash -lc '...'` if you need pipes or shell operators. Settings are private to this project and are not loaded automatically from repository content.
+
+Coding tasks run the fixed commands before and after the agent works. The saved result includes actual exit codes, output, duration, baseline failures, and repair attempts. Failed final checks mark the task **Needs review**. With no commands configured, the result says **Not independently verified**. Passing checks only establish what those checks cover; they do not prove general correctness. Repairs use verified free/local models, never additional premium manager calls.
+
+```bash
+codehub checks --project ~/my-project --command "python3 -m unittest discover" --repairs 1
+codehub verify --project ~/my-project
+```
+
+In **Chat settings**, choose **Preview source edits before applying** and enable edits. Or use `--preview` in `codehub run`, or `/mode preview` in terminal chat. The agent works in a private source copy, including current uncommitted source. Open **View changes**, select a file, and use **Apply this file**. Use **Undo this file** to restore its before-task contents. Applying individual files can leave a partially integrated feature; run the project checks afterward.
+
+```bash
+codehub changes --project ~/my-project
+codehub apply --project ~/my-project --task TASK_ID src/example.py
+codehub undo --project ~/my-project --task TASK_ID src/example.py
+```
+
+Apply/undo compare complete file contents and permissions before writing. If a file changed afterward, the operation stops without overwriting it. CLI file lists are preflighted together. Checkpoints cover eligible source and common assets: at most 20,000 files, 128 MiB total, 8 MiB per file. Dependencies, generated/ignored files, dotfiles, and sensitive filenames are excluded; over-limit or linked eligible source refuses the coding task before editing. Preview is not an operating-system sandbox. Commands can have external effects; database, package, network, and system changes cannot be rolled back. Dependencies are not copied, so a preview may need its own environment to run checks. Checkpoints remain in private task storage until the chat/project is deleted.
+
+Terminal shortcuts: `/checks COMMAND`, `/checks clear`, `/verify`, `/apply TASK_ID FILE`, and `/undo TASK_ID FILE`.
+
+## Task queue and local model coordination
+
+Send additional messages while a task runs to queue them. **Tools & settings → Task queue** shows running/waiting tasks, pause/resume, move up/down, and cancel controls. The dashboard runs one task at a time. Pausing leaves the current task running. After a restart, waiting tasks are restored paused so you can review them before resuming; interrupted tasks are not automatically rerun. Up to 100 tasks may wait. The CLI normally executes immediately and respects workspace locks. Add `--queue` to `codehub run` to enqueue in an already-running app/web server. Use `codehub queue`, `codehub queue pause`, `codehub queue resume`, `codehub queue up TASK_ID`, or `codehub queue cancel TASK_ID`. Terminal chat also accepts `/queue`.
+
+All Hub-managed local agent calls share a per-user OS file lock at `~/.local/state/local-ai-resource/ollama.lock`. This serializes local workers across Hub processes; a crashed process automatically releases its lock. The accompanying local NEPSE integration uses the same lock. Other applications and `codehub open` use their own inference paths unless they explicitly adopt this coordinator. A waiting caller can be canceled. The lock limits simultaneous inference, not model residency: Ollama keep-alive still controls when weights unload. **Release local model** remains available when Hub is idle.
+
+## Browser application checks
+
+Browser tests are optional. Install their development dependencies once in the Coding Hub directory:
+
+```bash
+npm ci --ignore-scripts
+npx playwright install chromium
+```
+
+Start your application's local development server. In **Project checks**, set its localhost URL and browser steps, for example:
+
+```json
+[
+  {"action": "fill", "selector": "input[name=title]", "value": "Example"},
+  {"action": "click", "selector": "button[type=submit]"},
+  {"action": "text", "selector": "h1", "value": "Example"}
+]
+```
+
+Supported actions are `click`, `fill`, `text` (contains text), `visible`, and `url` (URL contains value). Choose **Test application**, run `codehub browser-test --project ~/my-project`, or use `/browser-test`. These are repeatable browser checks with no model call. Console/page errors fail the run. Each run saves a screenshot, step results, and a Playwright trace privately; a failure attempts a screenshot too. The web UI offers artifact downloads; the native UI displays their folder and replay command. Traces may contain data shown by your application, so use test data.
+
+```bash
+npx playwright show-trace /path/from/the/result/trace.zip
+npm run test:browser  # Hub's own isolated browser regression suite
+```
+
+The suite uses synthetic projects, an ephemeral authenticated server, real browser interactions, and a trace. It does not use your account or generate model requests.
+
+## Symbol context and model observations
+
+The existing local search index now also extracts Python functions/classes, signatures, imports, and call references using Python's AST. Related definitions and syntactic references enter a bounded context packet; source lines must still be re-read before editing. The index updates incrementally and removes deleted entries. Other languages retain text retrieval. This is not a resolved whole-program call graph, and partial indexing remains labeled.
+
+Open **Tools & settings → Model observations**, or run `codehub metrics` / `/metrics`. It shows the last checked free-model eligibility, observed cooldowns, local-slot occupancy, last success, sample counts, average duration, and independently checked outcomes. These are task-dependent observations, not a benchmark or a promised success rate. Unknown pricing is never authorization to run a paid model. No background model benchmark consumes your allowance.
+
 ## Smart manager and workers
 
-Choose **Smart** in the app or browser, or run:
+Choose **Free Smart** to use a freshly verified zero-cost cloud model for planning/review and free/local workers for implementation. Its manager selector lists eligible free models. At most two bounded manager calls run; short analysis questions skip the manager. If the chosen manager is unavailable, the task stops and you can choose another model or Free automatic. There is no subscription fallback. Actual provider token totals are shown only when reported; smaller token use or identical quality cannot be guaranteed against an unrun standalone task.
+
+Choose **Smart** for your existing Antigravity manager, or run:
 
 ```bash
 codehub chat --backend smart --project ~/my-project --apply
@@ -351,15 +417,17 @@ Replies use readable Markdown, code blocks, and a **Copy reply** button. The bro
 
 ![Optional Smart run details with sample data](docs/desktop-task-details.png)
 
-After a new task with **Enable edits** finishes, choose **View changes** under its reply. Select a file to see green added lines, red removed lines, and line numbers in the diff headers. These are before/after snapshots of that task, so earlier edits are not presented as new work. Concurrent edits from another editor can still appear. This viewer is read-only; it does not commit or undo files.
+After a new task with **Enable edits** finishes, choose **View changes** under its reply. Select a file to see green added lines, red removed lines, and line numbers in the diff headers. These are before/after snapshots of that task, so earlier edits are not presented as new work. Concurrent edits from another editor can still appear. New coding tasks include private recovery checkpoints. Use **Apply this file** for a preview, or **Undo this file** for an applied change. Both refuse to overwrite later edits. Older tasks retain read-only diffs.
 
 In terminal chat, type `:changes`. Outside chat, run `codehub changes --project /path/to/project`, optionally adding `--task TASK_ID`. The command defaults to the latest saved task. Historical tasks and analysis-only tasks have no change snapshot.
 
-Snapshots cover eligible source files, exclude ignored/sensitive-name/binary files and symlinks, and use bounded scans (5 seconds, 32 MB, 256 KB per file). Reviews show up to 64 files / 200 KB of diffs. Partial coverage is labeled. Reviews and chat history stay in private application state, outside the project; this is not a backup of every file.
+Recovery checkpoints cover eligible source and common binary assets within the limits described above. Text diffs include UTF-8 files up to 256 KB each and show up to 64 files / 200 KB of diff content; larger/binary captured files still have Apply/Undo controls. Partial coverage is labeled. Reviews and chat history stay in private application state, outside the project; this is not a backup of every file.
 
 ![Browser file diff review with sample data](docs/web-changes.png)
 
 ### Provider access troubleshooting
+
+The CLI's native stream errors are monitored for reported free-usage limits. If a provider retries without emitting a final JSON error, Hub stops those retries and records a five-minute local backoff when no reset is provided. That backoff is not a claimed allowance reset. A provider can reject restricted manager requests even when a normal coding request works; Free Smart then stops clearly without enabling tools or switching to a subscription. Choose Free automatic to continue normal coding.
 
 A model's **Price verified** status means its published price is zero; it does not guarantee service access. If OpenCode's free service returns “free tier can only be used from within OpenCode” even from the official CLI, choose Antigravity or Local. Related upstream reports include [an official CLI free-tier rejection](https://github.com/anomalyco/opencode/issues/52907). Coding Hub keeps analysis-mode permissions restricted and does not bypass provider access controls.
 

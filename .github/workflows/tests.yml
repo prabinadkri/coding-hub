@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -p 'test_*.py' -v
-      - run: node --check assets/app.js
+      - run: node --check assets/app.js && node --check assets/features.js && node --check tools/browser_check.mjs
   native-ui:
     runs-on: ubuntu-latest
     steps:
@@ -23,3 +23,11 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-4.0 xvfb xauth
       - name: Validate native layouts, navigation, and saved sidebar startup
         run: /usr/bin/python3 tools/check_all.py --gui-only --output "$RUNNER_TEMP/coding-hub-ui"
+  browser-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Verify browser workflows with synthetic local data
+        run: npm run test:browser

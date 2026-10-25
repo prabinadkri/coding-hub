@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-COMMANDS = ('/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/delete-project', '/memory', '/changes', '/details', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
+COMMANDS = ('/queue', '/checks', '/verify', '/browser-test', '/metrics', '/apply', '/undo', '/help', '/models', '/model', '/workers', '/route', '/edit', '/paste', '/new', '/delete', '/delete-project', '/memory', '/changes', '/details', '/status', '/doctor', '/mode', '/project', '/general', '/quit')
 
 
 def interactive():
@@ -41,10 +41,12 @@ def help_text():
     print('\n' + style('Conversation'))
     print('  /new              New chat in the current workspace\n  /delete           Delete the current chat after confirmation\n  /general          Standalone chat without a project\n  /project PATH     Switch to a project folder\n  /paste            Multiline message; finish with a single .\n  /quit             Leave the chat')
     print('\n' + style('Agent'))
-    print('  /route NAME       free-auto, auto, smart, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model (Smart: Antigravity manager)\n  /workers 1|2|3    Smart maximum cloud workers; local stays serial\n  /mode analysis|build  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
+    print('  /route NAME       free-auto, auto, smart, smart-free, antigravity, free, local, claude, openai\n  /models           List available models\n  /model ID         Choose a model (Smart: selected manager)\n  /workers 1|2|3    Smart maximum cloud workers; local stays serial\n  /mode analysis|build|preview  Explain only or execute tasks\n  /edit on|off      Alias for enabling or disabling commands')
     print('\n' + style('Project'))
     print('  /delete-project   Remove this project’s saved chats and Hub memory; keep files')
     print('  /details          Show the latest reply’s Smart run details\n  /changes          Review the latest task diff\n  /memory           Shared instructions and index coverage\n  /status           Project, route, model, and edit mode\n  /doctor           Check Linux; include report in your next message')
+    print('  /queue            Inspect shared task queue; /queue pause or resume')
+    print('  /checks COMMAND   Configure a project check; /checks clear removes checks\n  /verify           Run configured checks without AI\n  /browser-test     Run configured local browser flow\n  /metrics          Observed model results and cooldowns\n  /apply TASK FILE… Apply selected preview files\n  /undo TASK FILE…  Undo selected files unless changed afterward')
     print(style('\n  Existing :commands work too. Use codehub quota for usage details.', '2'))
 
 
@@ -52,6 +54,7 @@ def memory_text(info):
     print('\n' + style('Project memory'))
     print(f"  {info['conversations']} chats · {info['turns']} saved turns")
     print(f"  Source index: {info['indexed_files']}/{info['eligible_files']} files" + (' · partial coverage' if not info.get('complete') else ''))
+    print('  Symbol map: ' + str(info.get('python_symbols', 0)) + ' Python definitions; other languages use text retrieval')
     names = ', '.join(item['name'] for item in info.get('guidance_files', []))
     print('  Instructions: ' + (safe_text(names) or 'No instruction files yet'))
     print('\n' + safe_text(info.get('requirements') or 'No pinned requirements yet. Add them from Project memory in the app or web.'))

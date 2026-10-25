@@ -121,12 +121,19 @@ def load(project, task=None):
     value = json.loads(path.read_text())
     if value.get('project') != str(memory.project):
         raise ValueError('This review belongs to a different project.')
+    for artifact in ('verification', 'browser-latest'):
+        source = path.parent / (artifact + '.json')
+        if source.is_file():
+            value[artifact] = json.loads(source.read_text())
     return value
 
 
 def show(project, task=None):
     result = load(project, task)
     print('\nChanges · ' + result['note'])
+    if result.get('task'): print('Task: ' + result['task'])
+    if result.get('recoverable'): print('Recoverable files: ' + ', '.join(result['recoverable']))
+    if result.get('verification'): print('Verification: ' + result['verification']['status'])
     if result.get('limited'):
         print('Partial review: some files or diff content exceeded the review limits.')
     if not result['files']:

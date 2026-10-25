@@ -66,6 +66,11 @@ def main():
         if path.startswith('accounts/session'): return {'id':'preview-signin','running':True,'screen':'Choose Google OAuth to continue','links':[]}
         if path in ('accounts/input','accounts/close'): return {'ok':True}
         if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
+        if path.startswith('checks?'): return {'commands':['python3 -m unittest'], 'timeout':180, 'repairs':0, 'browser':{'url':'http://127.0.0.1:3000','steps':[]}}
+        if path == 'checks': return body['config']
+        if path == 'verify': return {'status':'passed','checks':[{'command':'python3 -m unittest','exit_code':0,'output':'Synthetic check result'}]}
+        if path == 'queue': return {'paused':False,'tasks':[]}
+        if path == 'metrics': return {'note':'Observed attempts, not a benchmark.', 'catalog':{}, 'cooldowns':{},'observations':[], 'local_resource':{'busy':False}}
         if path == 'diagnostics': return {'text':'[OK] System disk\n20 GB free\n[OK] NVIDIA GPU\nGTX 1650'}
         if path == 'status': return status
         if path == 'conversation/delete':
@@ -149,6 +154,32 @@ def main():
             assert app.stack.get_visible_child_name() == 'usage'
             assert not app.tools_popover.get_visible()
             app.stack.set_visible_child_name('workspace')
+            from desktop_features import open_tool
+            for feature in ('checks', 'queue', 'metrics'):
+                panel = open_tool(app, Gtk, api, feature)
+                settle(.3)
+                assert not app.error.get_visible(), app.error.get_text()
+                if feature == 'checks':
+                    def descendants(widget):
+                        yield widget
+                        child=widget.get_first_child()
+                        while child:
+                            yield from descendants(child)
+                            child=child.get_next_sibling()
+                    run=next(w for w in descendants(panel) if isinstance(w,Gtk.Button) and w.get_label()=='Run checks')
+                    run.emit('clicked'); settle(.3)
+                    assert any(p=='verify' and b['project']==project for p,b in requests)
+                    assert not app.error.get_visible(), app.error.get_text()
+                capture(panel, 'desktop-feature-' + feature + '.png')
+                panel.close()
+            app.route.set_selected(hub.ROUTES.index('smart-free'))
+            settle(.2)
+            assert app.model_row.get_visible() and app.workers_row.get_visible()
+            assert not app.quality.get_sensitive()
+            app.edits.set_active(True); app.preview_edits.set_active(True)
+            assert app.form()['mode'] == 'preview'
+            app.edits.set_active(False); app.preview_edits.set_active(False)
+            app.route.set_selected(hub.ROUTES.index('free-auto'))
             assert app.workspace_split.get_position() == 248
             assert app.sidebar.get_width() <= 260, app.sidebar.get_width()
             app.workspace_split.set_position(300)

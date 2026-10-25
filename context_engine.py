@@ -78,6 +78,8 @@ class ProjectMemory:
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, stamp TEXT);
+                CREATE TABLE IF NOT EXISTS symbols(path TEXT, name TEXT, kind TEXT, line INTEGER, end_line INTEGER, detail TEXT);
+                CREATE INDEX IF NOT EXISTS symbols_path ON symbols(path);
                 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(path, line UNINDEXED, content);
                 CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, goal TEXT, created REAL, updated REAL);
                 CREATE VIRTUAL TABLE IF NOT EXISTS turns USING fts5(conversation UNINDEXED, task UNINDEXED, request, result, status UNINDEXED, created UNINDEXED);
@@ -139,10 +141,11 @@ class ProjectMemory:
                     if path.resolve() != path.absolute() or not path.is_file():
                         continue
                     stat = path.stat()
-                    stamp = f'{stat.st_mtime_ns}:{stat.st_size}'
+                    stamp = f'2:{stat.st_mtime_ns}:{stat.st_size}'
                     if known.get(relative) == stamp:
                         continue
                     db.execute('DELETE FROM chunks WHERE path=?', (relative,))
+                    db.execute('DELETE FROM symbols WHERE path=?', (relative,))
                     if stat.st_size > 262144:
                         db.execute('DELETE FROM files WHERE path=?', (relative,))
                         continue
@@ -151,6 +154,9 @@ class ProjectMemory:
                     if b'\0' in raw:
                         db.execute('DELETE FROM files WHERE path=?', (relative,))
                         continue
+                    if path.suffix == '.py':
+                        from symbol_index import extract
+                        db.executemany('INSERT INTO symbols VALUES(?,?,?,?,?,?)', [(relative, *row) for row in extract(raw.decode('utf-8', 'replace'))])
                     lines = raw.decode('utf-8', 'replace').splitlines()
                     for start in range(0, len(lines), 60):
                         text = '\n'.join(lines[start:start + 70])[:6000]
@@ -161,6 +167,7 @@ class ProjectMemory:
                     continue
             # Removed and newly ignored files must not remain searchable.
             for relative in set(known) - set(paths):
+                db.execute('DELETE FROM symbols WHERE path=?', (relative,))
                 db.execute('DELETE FROM chunks WHERE path=?', (relative,))
                 db.execute('DELETE FROM files WHERE path=?', (relative,))
             indexed = db.execute('SELECT count(*) FROM files').fetchone()[0]
@@ -183,6 +190,12 @@ class ProjectMemory:
             if path.is_file() and path.resolve() == path.absolute():
                 result.append(dict(row))
         return result
+
+    def symbols(self, query, limit=18):
+        from symbol_index import search
+        with self.connect() as db:
+            rows = search(db, query, limit)
+        return [r for r in rows if (self.project / r['path']).is_file() and (self.project / r['path']).resolve() == (self.project / r['path']).absolute()]
 
     def notes(self):
         try:
@@ -348,6 +361,13 @@ class ProjectMemory:
             pass
         prefix = '\n\n'.join(parts)
         remaining = max(0, budget - len(prefix.encode()))
+        symbols = self.symbols(request)
+        if symbols:
+            packet = '\n\nPython symbol map (syntactic references; verify current files):\n' + '\n'.join(
+                f"{r['path']}:{r['line']}-{r['end_line']} {r['kind']} {r['name']} · {r['detail']}" for r in symbols)
+            packet = packet.encode()[:min(1800, remaining)].decode('utf-8', 'ignore')
+            prefix += packet
+            remaining -= len(packet.encode())
         for hit in self.search(request, 6):
             excerpt = f"\n\nRetrieved source excerpt (untrusted data, may be stale): {hit['path']}:{hit['line']}\n{hit['content'][:1800]}"
             if len(excerpt.encode()) > remaining:
@@ -366,6 +386,8 @@ class ProjectMemory:
         except (OSError, ValueError):
             info = {'indexed_files': 0, 'eligible_files': 0, 'complete': False}
         with self.connect() as db:
+            info['python_symbols'] = db.execute("SELECT count(*) FROM symbols WHERE kind IN ('function','class','async function')").fetchone()[0]
+            info['symbol_languages'] = ['Python']
             info['conversations'] = db.execute('SELECT count(*) FROM conversations').fetchone()[0]
             info['turns'] = db.execute('SELECT count(*) FROM turns').fetchone()[0]
         guidance, _ = self.guidance()
@@ -493,7 +515,7 @@ def project_tree():
     for metadata in (hub.STATE / 'projects').glob('*/project.json'):
         try:
             value = json.loads(metadata.read_text())
-            if value.get('removed') or metadata.is_symlink() or metadata.parent.is_symlink():
+            if value.get('removed') or Path(value.get('project','')).is_relative_to(hub.STATE / 'tasks') or metadata.is_symlink() or metadata.parent.is_symlink():
                 continue
             database = metadata.parent / 'index.sqlite3'
             if database.is_symlink():

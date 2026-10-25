@@ -239,13 +239,38 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual((self.project / "keep.txt").read_text(), "user content")
         self.assertEqual(self.request("/api/tasks")[1]["tasks"][0]["mode"], "analysis")
 
-    def test_stop_cancels_actual_child_and_blocks_overlapping_tasks(self):
+    def test_stop_cancels_actual_child_and_queues_without_overlapping_tasks(self):
         self.manager.command_factory = lambda t: [sys.executable, "-u", "-c", "import time;print('started');time.sleep(30)"]
         body = {"project": str(self.project), "prompt": "wait"}
         _, task = self.request("/api/tasks", body)
-        self.assertEqual(self.request("/api/tasks", body)[0], 409)
+        code, waiting = self.request('/api/tasks', body)
+        self.assertEqual(code, 201)
+        self.assertEqual(waiting['status'], 'queued')
+        self.assertEqual(self.request('/api/stop', {'id':waiting['id']})[1]['status'], 'canceled')
         self.assertEqual(self.request("/api/stop", {"id": task["id"]})[0], 200)
         self.assertEqual(self.wait_task(task["id"])["status"], "canceled")
+
+    def test_queue_reorders_and_recovers_paused_after_restart(self):
+        self.manager.control_queue({'action':'pause'})
+        first=self.manager.start({'project':str(self.project),'prompt':'first'})
+        second=self.manager.start({'project':str(self.project),'prompt':'second'})
+        self.manager.control_queue({'action':'move','id':second['id'],'direction':'up'})
+        self.assertEqual(self.manager.queue()['tasks'][0]['id'],second['id'])
+        restored=dashboard.TaskManager(self.manager.directory, self.manager.command_factory)
+        self.assertTrue(restored.paused)
+        self.assertEqual(restored.queue()['tasks'][0]['id'],second['id'])
+        self.manager.stop(first['id']);self.manager.stop(second['id'])
+
+    def test_cli_can_enqueue_and_control_the_authenticated_queue(self):
+        import queue_client
+        with patch.object(dashboard, 'session_url', return_value=self.url + '/#test-token'):
+            self.assertTrue(queue_client.control('pause')['paused'])
+            argv=['hub.py','run','--project',str(self.project),'--queue','--preview','queued CLI task']
+            with patch.object(sys,'argv',argv),contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(hub.main(),0)
+            tasks=queue_client.control()['tasks']
+            self.assertEqual((len(tasks),tasks[0]['mode']),(1,'preview'))
+            self.assertEqual(queue_client.control('cancel',tasks[0]['id'])['status'],'canceled')
 
     def test_invalid_task_parameters_do_not_launch_a_process(self):
         for extra in ({"backend": "paid"}, {"mode": "shell"}, {"quality": "unknown"}, {"prompt": ["bad"]}, {"project": "/no-such-directory-abc"}):
