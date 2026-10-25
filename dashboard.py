@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -39,6 +39,12 @@ def task_progress(task, output=''):
     if state == 'stopping': return {'label':'Stopping…', 'detail':'Waiting for the agent to stop safely'}
     if state not in ACTIVE: return {'label':str(state or 'Ready').replace('_',' ').capitalize(), 'detail':'Task ended'}
     label, detail = 'Thinking / waiting for model…', 'Waiting for the next agent update'
+    from browser_checks import chat_request
+    try:
+        if chat_request(task.get('prompt', '')) is not None:
+            label, detail = 'Testing website…', 'Discovering the local web app; no model tokens used'
+    except ValueError:
+        pass
     integrating = False
     names = {'read':'Read file', 'glob':'Find files', 'grep':'Search source', 'edit':'Edit file', 'write':'Write file', 'bash':'Run command'}
     for line in output.splitlines():
@@ -53,6 +59,8 @@ def task_progress(task, output=''):
             label, detail = 'Integrating and checking…', line.split(']', 1)[-1].strip()[:150]
         elif line.startswith('[Smart worker]') or re.match(r'^\[\d+\]',line):
             label, detail = 'Integrating and checking…' if integrating else 'Thinking / waiting for model…', line.split(']',1)[-1].strip()[:120]
+        elif line.startswith('[Browser]'):
+            label, detail = 'Testing website…', line.removeprefix('[Browser]').strip()[:180]
         elif line.startswith('[Verification') or line.startswith('[Local queue]'):
             label, detail = 'Checking results…' if line.startswith('[Verification') else 'Waiting for local model…', line[:180]
         elif line.startswith('[tool] '):
@@ -181,8 +189,13 @@ class TaskManager:
         backend, quality, mode = data.get("backend", hub.DEFAULT_ROUTE), data.get("quality", "fast"), data.get("mode", "analysis")
         if backend not in hub.ROUTES or quality not in ("fast", "deep") or mode not in ("analysis", "build", "preview"):
             raise ValueError("Choose a valid route, quality and task mode.")
-        model = hub.validate_model(backend, data.get('model'))
-        workers = hub.validate_workers(backend, data.get('workers', 1))
+        from browser_checks import chat_request
+        browser_test = chat_request(prompt) is not None
+        if browser_test and hub.is_general(project):
+            raise ValueError('Choose a project chat before testing a website.')
+        model = None if browser_test else hub.validate_model(backend, data.get('model'))
+        workers = 1 if browser_test else hub.validate_workers(backend, data.get('workers', 1))
+        if browser_test: mode = 'analysis'
         if backend in ("smart", "smart-free") and len(prompt.encode()) > 6000:
             raise ValueError("Smart requests are limited to 6,000 UTF-8 bytes. Split the task or choose a direct route.")
         if mode == 'preview' and hub.is_general(project):
@@ -511,10 +524,16 @@ class Handler(BaseHTTPRequestHandler):
                 value = profile(memory.project)
                 latest = memory.directory / 'browser-latest.json'
                 return self.reply(200, dict(value, browser_latest=json.loads(latest.read_text()) if latest.is_file() else None))
+            if parsed.path == '/api/browser/report':
+                memory = ProjectMemory(query.get('project', [''])[0])
+                identifier = query.get('id', [''])[0]
+                if not re.fullmatch(r'[0-9]{8}-[0-9]{6}-[a-f0-9]{8}', identifier):
+                    raise ValueError('Choose a browser report.')
+                return self.reply(200, json.loads((memory.directory / 'browser-runs' / identifier / 'result.json').read_text()))
             if parsed.path == '/api/browser/artifact':
                 memory = ProjectMemory(query.get('project', [''])[0])
                 identifier, name = query.get('id', [''])[0], query.get('name', [''])[0]
-                if not re.fullmatch(r'[0-9]{8}-[0-9]{6}-[a-f0-9]{8}', identifier) or name not in ('trace.zip', 'final.png', 'failure.png', 'result.json'):
+                if not re.fullmatch(r'[0-9]{8}-[0-9]{6}-[a-f0-9]{8}', identifier) or not (name in ('trace.zip', 'final.png', 'failure.png', 'result.json', 'server.log') or re.fullmatch(r'page-[1-3]-(desktop|mobile)\.png', name)):
                     raise ValueError('Choose a browser test artifact.')
                 path = memory.directory / 'browser-runs' / identifier / name
                 return self.reply(200, path.read_bytes(), mimetypes.guess_type(name)[0] or 'application/octet-stream')

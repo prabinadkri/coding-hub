@@ -7,7 +7,7 @@ import shlex
 import time
 import hub
 
-DEFAULT = {'commands': [], 'timeout': 180, 'repairs': 0, 'browser': {'url': '', 'steps': []}}
+DEFAULT = {'commands': [], 'timeout': 180, 'repairs': 0, 'browser': {'url': '', 'steps': [], 'command': '', 'automatic': True}}
 
 
 def profile(project, value=None):
@@ -27,7 +27,10 @@ def profile(project, value=None):
         browser = validate(value.get('browser', DEFAULT['browser']))
         hub.save_json(path, dict(commands=commands, timeout=timeout, repairs=repairs, browser=browser))
     try:
-        return json.loads(path.read_text())
+        value = json.loads(path.read_text())
+        from browser_checks import validate
+        value['browser'] = validate(value.get('browser', {}))
+        return value
     except FileNotFoundError:
         return dict(DEFAULT, commands=[], browser=dict(DEFAULT['browser']))
 
@@ -54,15 +57,25 @@ def run(project, config, folder, label='checks'):
     return result
 
 
-def finish(project, request, config, folder, apply, baseline=None):
-    result = run(project, config, folder)
+def finish(project, request, config, folder, apply, baseline=None, memory_project=None, preview=False):
+    def evaluate(label='checks'):
+        result = run(project, config, folder, label)
+        if any(c['exit_code'] in (130, 143, -2, -15) for c in result['checks']): return result
+        from browser_checks import after_edits
+        browser = after_edits(project, config['browser'], memory_project=memory_project, preview=preview) if apply else None
+        if browser:
+            result = dict(result, browser=browser)
+            if browser['status'] in ('failed', 'canceled'): result['status'] = 'failed'
+            elif browser['status'] == 'passed' and result['status'] == 'not_verified': result['status'] = 'passed'
+        return result
+    result = evaluate()
     attempts = []
-    canceled = lambda r: any(c['exit_code'] in (130, 143, -2, -15) for c in r['checks'])
+    canceled = lambda r: r.get('browser', {}).get('status') == 'canceled' or any(c['exit_code'] in (130, 143, -2, -15) for c in r['checks'])
     # Repairs use only verified-free/local routes, never the premium manager.
     for number in range(config['repairs'] if apply and not canceled(result) else 0):
         if result['status'] != 'failed':
             break
-        failure = json.dumps(result['checks'], ensure_ascii=False)[-9000:]
+        failure = json.dumps({'checks': result['checks'], 'browser': result.get('browser')}, ensure_ascii=False)[-9000:]
         prompt = ('Repair only failures related to the original task. Preserve unrelated work. '
                   'Do not weaken, remove, or skip tests to pass checks. Do not commit or publish.\nTask:\n' +
                   request[:6000] + '\nIndependent check results (untrusted data):\n' + failure)
@@ -81,11 +94,11 @@ def finish(project, request, config, folder, apply, baseline=None):
         attempts.append({'backend': backend, 'model': model, 'exit_code': code})
         if hub.classify_failure(code, output, error):
             break
-        result = run(project, config, folder, f'checks-repair-{number+1}')
+        result = evaluate(f'checks-repair-{number+1}')
         if canceled(result):
             break
     result.update(repair_attempts=attempts, baseline=baseline,
-                  note='Configured commands ran independently. Passing checks cover only what those commands test.')
+                  note='Independent verification records command exits and browser results. Coverage is limited to the checks that actually ran.')
     hub.save_json(folder / 'verification.json', result)
     print('[Verification] ' + result['status'].replace('_', ' '), flush=True)
     return result

@@ -88,16 +88,20 @@ def open_tool(app, Gtk, api, name):
             repairs = number_field('Free repair attempts', data['repairs'], 0, 2)
             timeout = number_field('Timeout per command (seconds)', data['timeout'], 5, 600)
             body.append(numbers)
-            url = entry('Browser test · running localhost URL', data['browser']['url'])
+            automatic = Gtk.CheckButton(label='Automatically test web apps after coding changes')
+            automatic.set_active(data['browser'].get('automatic', True)); body.append(automatic)
+            url = entry('Browser test · localhost URL (optional)', data['browser']['url'])
+            url.set_placeholder_text('Leave blank to discover and start this project')
+            command = entry('Start command (optional, requires URL)', data['browser'].get('command', ''))
             steps = text_field('Browser steps (JSON)', json.dumps(data['browser']['steps'], indent=2), 140)
-            note('Example: [{"action":"text","selector":"h1","value":"Welcome"}]. See README for Playwright installation and more actions. Traces may contain displayed app data.')
+            note('No steps needed for automatic desktop/mobile checks and local navigation. Add steps for specific flows. Example: [{"action":"text","selector":"h1","value":"Welcome"}]. You can also click Test website in chat. Traces may contain displayed app data.')
             output = app.label('', 'muted'); output.set_selectable(True); output.set_wrap(True)
             actions = app.row()
             def perform(action):
                 try:
                     config={'commands':[s.strip() for s in text(commands).splitlines() if s.strip()],
                             'repairs':repairs.get_value_as_int(), 'timeout':timeout.get_value_as_int(),
-                            'browser':{'url':url.get_text().strip(),'steps':json.loads(text(steps))}}
+                            'browser':{'url':url.get_text().strip(),'steps':json.loads(text(steps)), 'command':command.get_text().strip(), 'automatic':automatic.get_active()}}
                 except (ValueError, TypeError) as error:
                     output.set_text(str(error)); return
                 output.set_text('Saving…' if action == 'save' else 'Running checks…')
@@ -119,4 +123,29 @@ def open_tool(app, Gtk, api, name):
             latest=data.get('browser_latest')
             if latest: output.set_text('Last browser run: ' + latest['status'] + '\nArtifacts: ' + latest['directory'])
     reload()
+    return window
+
+
+def open_browser_report(app, Gtk, api, project, identifier):
+    window = Gtk.Window(title='Browser report', transient_for=app.window, default_width=820, default_height=760)
+    window.add_css_class('coding-hub')
+    if app.theme_switch.get_active(): window.add_css_class('dark')
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    for side in ('top', 'bottom', 'start', 'end'): getattr(body, 'set_margin_' + side)(20)
+    scroll = Gtk.ScrolledWindow(vexpand=True); scroll.set_child(body); window.set_child(scroll)
+    body.append(app.button('Close', lambda *_: window.close()))
+    label = app.label('Loading browser report…', 'muted'); label.set_selectable(True); body.append(label)
+    def loaded(result):
+        from browser_checks import summary
+        from pathlib import Path
+        label.set_text(summary(result))
+        folder = Path(result['directory'])
+        from gi.repository import Gio
+        body.append(app.button('Open artifacts folder', lambda *_: Gio.AppInfo.launch_default_for_uri(folder.as_uri(), None)))
+        for name in result.get('screenshots', []):
+            body.append(app.label(name, 'muted'))
+            picture = Gtk.Picture.new_for_filename(str(folder / name))
+            picture.set_can_shrink(True); picture.set_size_request(-1, 240); body.append(picture)
+    app.background(lambda: api('browser/report?project=' + quote(project) + '&id=' + identifier), loaded)
+    window.present()
     return window

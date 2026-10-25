@@ -556,6 +556,12 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
         raise ValueError(f"Project directory does not exist: {project}")
     if not request.strip():
         raise ValueError("The task cannot be empty.")
+    from browser_checks import chat_request, chat_task
+    if chat_request(request) is not None:
+        if dry_run:
+            print(json.dumps({'project': str(project), 'action': 'browser-test', 'model_calls': 0}))
+            return 0
+        return chat_task(project, request, conversation, resume)
     model = validate_model(backend, model)
     workers = validate_workers(backend, workers)
     requested_model = model
@@ -614,15 +620,20 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
         def checked(text, code):
             if code not in (0, 3) or not apply:
                 return text, code
-            result = finish_checks(project, request, config, folder, apply, baseline)
+            result = finish_checks(project, request, config, folder, apply, baseline, memory_project=original_project, preview=preview)
             record['verification'] = result
             from model_metrics import verified
             verified(task_id, result['status'])
-            label = {'passed': 'Configured checks passed', 'failed': 'Configured checks failed', 'not_verified': 'Not independently verified: no project checks configured'}[result['status']]
+            label = {'passed': 'Verification checks passed', 'failed': 'Verification checks failed', 'not_verified': 'Not independently verified: no checks ran'}[result['status']]
             text += '\n\n' + label + '.'
+            if result.get('browser'):
+                from browser_checks import summary
+                browser_summary = summary(result['browser'], artifacts=concise)
+                text += '\n\n' + browser_summary
+                if concise: terminal_reply(browser_summary)
             if preview:
                 text += ' Changes are in a preview copy; review and apply selected files.'
-            return text, 130 if any(c['exit_code'] in (130, 143, -2, -15) for c in result['checks']) else 3 if result['status'] == 'failed' else code
+            return text, 130 if result.get('browser', {}).get('status') == 'canceled' or any(c['exit_code'] in (130, 143, -2, -15) for c in result['checks']) else 3 if result['status'] == 'failed' else code
         output = ""
         if backend in ("smart", "smart-free"):
             from smart_route import execute
@@ -912,8 +923,9 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                         with project_lock(memory.project):
                             print(json.dumps(run_checks(memory.project, profile(memory.project), private_dir(STATE / 'manual-checks' / uuid.uuid4().hex)), indent=2))
                     elif name == '/browser-test':
-                        from browser_checks import run
-                        print(json.dumps(run(memory.project), indent=2))
+                        from browser_checks import chat_task
+                        conversation = memory.conversation(conversation, request)
+                        chat_task(memory.project, request, conversation=conversation)
                     elif name == '/metrics':
                         from model_metrics import snapshot
                         print(json.dumps(snapshot(), indent=2))
@@ -1045,12 +1057,13 @@ def main():
                 result = run_checks(args.project, profile(args.project), private_dir(STATE / 'manual-checks' / uuid.uuid4().hex))
         elif args.action == 'browser-test':
             from browser_checks import run
-            result = run(args.project)
+            with project_lock(args.project):
+                result = run(args.project)
         else:
             from workspace_changes import change
             result = change(args.project, args.task, args.action, args.files)
         print(json.dumps(result, indent=2))
-        return 1 if result.get('status') == 'failed' else 0
+        return 130 if result.get('status') == 'canceled' else 1 if result.get('status') == 'failed' else 0
     if args.action == 'doctor':
         import system_diagnostics
         print(system_diagnostics.report()['text'])

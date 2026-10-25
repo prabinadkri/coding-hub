@@ -13,6 +13,7 @@ import hub
 import dashboard
 from context_engine import ProjectMemory
 import workspace_changes
+import browser_checks
 
 
 class Cache:
@@ -23,13 +24,16 @@ class Cache:
 with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
     root=Path(temporary);hub.STATE=root/'state';project=root/'project';project.mkdir()
     (project/'source.py').write_text('answer = 1\n')
+    html='<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Browser fixture</title><h1>Ready to test</h1><a href="/about.html">About</a>'
+    (project/'index.html').write_text(html)
+    (project/'about.html').write_text(html.replace('Ready to test','About this fixture'))
     memory=ProjectMemory(project);conversation=memory.conversation(goal='Synthetic preview')
     folder=hub.private_dir(hub.STATE/'tasks'/'preview-task')
     with contextlib.redirect_stdout(io.StringIO()):
         with workspace_changes.session(project, folder, True, True) as working:
             (working/'source.py').write_text('answer = 2\n')
     memory.record(conversation,folder.name,'Improve the answer','Preview ready.','completed')
-    manager=dashboard.TaskManager(command_factory=lambda t:[sys.executable,'-u','-c','import time;print("Synthetic task");time.sleep(.4)'])
+    manager=dashboard.TaskManager(command_factory=lambda t: dashboard.TaskManager.command(t) if browser_checks.chat_request(t['prompt']) is not None else [sys.executable,'-u','-c','import time;print("Synthetic task");time.sleep(.4)'])
     status=Cache({'checking':False,'programs':{},'models':[hub.LOCAL_AGENT_MODEL],'free_models':['beam-free'],
                   'local_ready':True,'local_model':hub.LOCAL_AGENT_MODEL,'gpu':None,'ram':None,'loaded':[],
                   'accounts':[],'provider_models':{},'home':str(root),'default_project':str(project)})

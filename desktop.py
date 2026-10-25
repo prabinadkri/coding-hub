@@ -91,7 +91,7 @@ def launch(port=8765):
         request = urllib.request.Request(base + "/api/" + path,
             data=None if body is None else json.dumps(body).encode(), headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=4900 if path == 'verify' else 190 if path == 'browser-test' else 12) as response:
+            with urllib.request.urlopen(request, timeout=4900 if path == 'verify' else 240 if path == 'browser-test' else 12) as response:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             with error:
@@ -447,6 +447,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.edits = Gtk.CheckButton(label='Allow edits & commands')
             footer.append(self.edits)
             footer.append(Gtk.Box(hexpand=True))
+            self.browser_button = self.button('Test website', lambda *_: self.run_task(browser_test=True))
+            self.browser_button.set_tooltip_text('Discover and test this project in a browser. Results appear in this chat; no AI tokens used.')
+            footer.append(self.browser_button)
             self.stop_button = self.button('Stop task', self.stop, 'danger')
             self.stop_button.set_sensitive(False)
             self.stop_button.set_visible(False)
@@ -615,6 +618,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.project_card.set_visible(not existing and not general)
             self.chat_memory_button.set_visible(existing or not general)
             self.chat_memory_button.set_label('Memory' if general else 'Project memory')
+            self.browser_button.set_visible(not general)
             self.edits.set_label('Allow commands & changes' if general else 'Allow edits & commands')
             self.project.set_editable(not existing)
             self.browse_button.set_sensitive(not existing)
@@ -747,15 +751,22 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.save_draft()
             self.prompt.grab_focus()
 
-        def run_task(self, *_):
+        def run_task(self, *_, browser_test=False):
+            if getattr(self, 'submitting_task', False): return
             data = self.form()
+            if browser_test:
+                data.update(prompt='Test this website in the browser', mode='analysis')
             if not data['prompt'].strip():
                 self.prompt.grab_focus()
                 return
             self.save_draft()
             self.error.set_visible(False)
             self.run_button.set_sensitive(False)
+            self.submitting_task = True
+            self.browser_button.set_sensitive(False)
             def started(task):
+                self.submitting_task = False
+                self.browser_button.set_sensitive(True)
                 self.follow_chat = True
                 self.tasks = [task] + [t for t in self.tasks if t['id'] != task['id']]
                 self.selected = task["id"]
@@ -765,7 +776,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.sync_chat_layout()
                 self.project.set_editable(False)
                 self.browse_button.set_sensitive(False)
-                if self.form()['prompt'] == data['prompt']:
+                if not browser_test and self.form()['prompt'] == data['prompt']:
                     self.prompt.get_buffer().set_text('')
                 self.save_draft()
                 self.output_details.set_expanded(False)
@@ -775,7 +786,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                                       'total_turns': len(self.message_archive)})
                 self.prompt.grab_focus()
                 self.refresh()
-            self.background(lambda: api("tasks", data), started)
+            def failed(error):
+                self.submitting_task = False
+                self.browser_button.set_sensitive(True)
+                self.run_button.set_sensitive(True)
+                self.error.set_text(str(error)); self.error.set_visible(True)
+            self.background(lambda: api("tasks", data), started, failed)
 
         def stop(self, *_):
             if self.selected:
@@ -1233,6 +1249,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                     actions.append(self.message_action('Copy reply', 'edit-copy-symbolic', lambda *_: Gdk.Display.get_default().get_clipboard().set(text)))
                     if turn.get('has_review'):
                         actions.append(self.message_action('View changes', 'document-edit-symbolic', lambda *_, task=turn['task']: self.open_changes(task)))
+                    if turn.get('browser_report'):
+                        from desktop_features import open_browser_report
+                        actions.append(self.message_action('Browser report', 'web-browser-symbolic', lambda *_, identifier=turn['browser_report'], project=self.conversation_project: open_browser_report(self, Gtk, api, project, identifier)))
                     if turn.get('details'):
                         actions.append(self.message_action('View details', 'view-list-symbolic', lambda *_, text=turn['details']: self.open_task_details(text)))
                     card.append(actions)

@@ -189,7 +189,7 @@ In the dashboard, **N** starts a new chat, and **Ctrl/Cmd + Enter** runs it. Nat
 
 Open **Tools & settings → Project checks** in the app or browser. Set one trusted command per line, a timeout, and zero to two free repair attempts. Commands execute directly as arguments; use an explicit shell such as `bash -lc '...'` if you need pipes or shell operators. Settings are private to this project and are not loaded automatically from repository content.
 
-Coding tasks run the fixed commands before and after the agent works. The saved result includes actual exit codes, output, duration, baseline failures, and repair attempts. Failed final checks mark the task **Needs review**. With no commands configured, the result says **Not independently verified**. Passing checks only establish what those checks cover; they do not prove general correctness. Repairs use verified free/local models, never additional premium manager calls.
+Coding tasks with edits enabled run the fixed commands before and after the agent works. After the agent finishes, supported web projects also run browser checks by default. The saved result includes actual exit codes, output, duration, baseline failures, browser results, and repair attempts. Failed final checks mark the task **Needs review**. Without command or browser coverage, the result says **Not independently verified**. Passing checks only establish what those checks cover; they do not prove general correctness. Repairs use verified free/local models, never additional premium manager calls. Browser and command failures share the same maximum of two repair attempts.
 
 ```bash
 codehub checks --project ~/my-project --command "python3 -m unittest discover" --repairs 1
@@ -223,7 +223,15 @@ npm ci --ignore-scripts
 npx playwright install chromium
 ```
 
-Start your application's local development server. In **Project checks**, set its localhost URL and browser steps, for example:
+In a project chat, click **Test website**, type **“test this website”**, or send **`/browser-test`**. The app, web interface, and terminal route these requests directly to the browser runner without an AI call. Results are saved in the same conversation. The quick action preserves your unsent draft, uses the shared task queue, and can be stopped like other tasks. The small **Browser report** action opens that turn's screenshots and results; the web version also downloads the trace. `/browser-test http://127.0.0.1:3000` tests an explicit local URL for that turn without changing saved settings. Mixed requests such as “build a page and test it” still go to your agent and receive the automatic checks after coding.
+
+For supported projects, **no URL or JSON configuration is required**. Hub discovers Vite, Next.js development apps, Astro, Create React App, and standalone `index.html` sites in the selected folder or common `frontend`, `web`, `client`, `app`, `website`, `site`, `apps/*`, and `packages/*` folders. It starts a temporary server on an available loopback port, waits up to 60 seconds for readiness, runs Chromium, then stops its server and child processes—even on failure or cancellation. Existing explicitly configured servers are left running. Dependencies must already be installed; Hub does not install packages or guess arbitrary startup scripts. Multiple detected web apps require selecting the specific app folder or configuring its URL.
+
+Automatic checks inspect the homepage and up to two ordinary local links at desktop (1365×900) and mobile (390×844) sizes. They detect console errors, uncaught page errors, failing local document/script/style/API responses, empty pages, and horizontal overflow. They do not randomly click buttons, fill forms, or infer every business workflow. URL navigation stays on the configured local origin. Screenshots capture the visible viewport and traces capture the interaction.
+
+After successful coding tasks with edits enabled, these browser checks also run automatically when a supported web app or explicit URL is present. Analysis-only conversations do not trigger them unless you explicitly request a browser test. You can turn this off per project in **Tools & settings → Project checks → Automatically test web apps after coding changes**. Preview copies are tested separately; a saved URL is skipped in preview mode to avoid accidentally testing the original application. Preview dependencies are not shared automatically, so a missing environment is reported rather than claiming success.
+
+For other frameworks, use **Project checks** to set a running localhost URL. An optional **Start command** starts it if the URL is unavailable; it runs as literal arguments in the selected project folder, with no implicit shell. Start commands you configure must bind to loopback and serve that URL. Leave both fields blank for discovery. Both startup and browser execution have bounded timeouts. To test particular user interactions, optionally save browser steps, for example:
 
 ```json
 [
@@ -233,7 +241,7 @@ Start your application's local development server. In **Project checks**, set it
 ]
 ```
 
-Supported actions are `click`, `fill`, `text` (contains text), `visible`, and `url` (URL contains value). Choose **Test application**, run `codehub browser-test --project ~/my-project`, or use `/browser-test`. These are repeatable browser checks with no model call. Console/page errors fail the run. Each run saves a screenshot, step results, and a Playwright trace privately; a failure attempts a screenshot too. The web UI offers artifact downloads; the native UI displays their folder and replay command. Traces may contain data shown by your application, so use test data.
+Supported actions are `click`, `fill`, `text` (contains text), `visible`, and `url` (URL contains value). Saved steps run after desktop/mobile checks of the starting page, instead of automatic link exploration. **Test application** in settings and `codehub browser-test --project ~/my-project` remain available. Each run saves screenshots, step results, server output (when started by Hub), and a Playwright trace privately; a failure attempts a screenshot too. Traces may contain data shown by your application, so use test data. Browser runs use no model tokens; enabled AI repair attempts use free/local models.
 
 ```bash
 npx playwright show-trace /path/from/the/result/trace.zip

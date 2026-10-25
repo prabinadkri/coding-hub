@@ -1,6 +1,6 @@
 {
   "name": "coding-hub-browser-checks",
-  "version": "2.11.0",
+  "version": "2.12.0",
   "private": true,
   "description": "Optional development tools for repeatable local browser checks",
   "scripts": {"test:browser": "node tools/check_web_ui.mjs"},

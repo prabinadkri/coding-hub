@@ -12,7 +12,7 @@ fs.mkdirSync(output,{recursive:true});
 const server=spawn(process.env.PYTHON || 'python3',['tools/web_fixture.py'],{cwd:process.cwd(),stdio:['ignore','pipe','inherit']});
 const lines=createInterface({input:server.stdout});
 let browser,context;
-const deadline=setTimeout(()=>{server.kill();process.exitCode=1;console.error('Web test timed out');browser?.close();},90000);
+const deadline=setTimeout(()=>{server.kill();process.exitCode=1;console.error('Web test timed out');browser?.close();},150000);
 try {
   const [line]=await once(lines,'line'), fixture=JSON.parse(line);
   browser=await chromium.launch({headless:true});context=await browser.newContext({viewport:{width:1365,height:900}});
@@ -33,7 +33,7 @@ try {
   await open('checks');await page.getByLabel('Check commands (one per line)').fill('python3 -c "print(123)"');
   await page.getByRole('button',{name:'Run checks',exact:true}).click();
   await page.locator('.feature-output').filter({hasText:'passed'}).waitFor();
-  await page.getByLabel('Browser test · running localhost URL').fill(fixture.url);
+  await page.getByLabel('Browser test · localhost URL (optional)').fill(fixture.url);
   await page.getByLabel('Browser steps (JSON)').fill(JSON.stringify([{action:'visible',selector:'#chat-title'},{action:'text',selector:'#chat-title',value:'New conversation'},{action:'url',value:'127.0.0.1'}]));
   await page.getByRole('button',{name:'Test application',exact:true}).click();
   await page.locator('.feature-output').filter({hasText:'Browser: passed'}).waitFor({timeout:30000});
@@ -65,8 +65,32 @@ try {
   await page.getByRole('button',{name:'Undo this file',exact:true}).click();
   await page.getByRole('button',{name:'Apply this file',exact:true}).waitFor();
   assert.equal(fs.readFileSync(path.join(fixture.project,'source.py'),'utf8'),'answer = 1\n');
+  await page.locator('#changes-close').click();
+  // Real queued browser task: no URL, no steps, no model, and an existing unsent draft.
+  await page.evaluate(async project=>api('checks',{project,config:{commands:[],timeout:180,repairs:0,browser:{url:'',steps:[]}}}),fixture.project);
+  await page.locator('#prompt').fill('Keep this unsent draft');
+  await page.locator('#test-website').click();
+  await page.locator('.assistant .message-text').filter({hasText:'Browser checks passed.'}).waitFor({timeout:40000});
+  assert.equal(await page.locator('#prompt').inputValue(),'Keep this unsent draft');
+  await page.getByRole('button',{name:'Browser report',exact:true}).click();
+  await page.locator('#features-body img').first().waitFor();
+  await page.getByText('2 page(s) checked at desktop/mobile sizes', {exact:false}).waitFor();
+  await page.screenshot({path:path.join(output,'browser-chat-report.png')});
+  const latest=await page.evaluate(async project=>(await api('checks?project='+encodeURIComponent(project))).browser_latest,fixture.project);
+  assert.equal(latest.status,'passed');assert.equal(latest.pages.length,2);
+  assert.equal(latest.screenshots.length,5);assert.equal(latest.started,true);
+  await assert.rejects(fetch(latest.url), 'The owned development server should be stopped.');
+  await page.locator('#features-close').click();
+  await page.screenshot({path:path.join(output,'browser-chat-reply.png')});
+  // Natural-language routing catches real browser errors and responsive overflow.
+  fs.writeFileSync(path.join(fixture.project,'index.html'),'<!doctype html><link rel="icon" href="data:,"><h1>Broken fixture</h1><div style="width:2000px">Overflow</div><script>console.error("fixture browser error")</script>');
+  await page.locator('#prompt').fill('Please test this website');await page.locator('#run-task').click();
+  await page.locator('.assistant .message-text').filter({hasText:'Browser checks failed.'}).waitFor({timeout:40000});
+  const failed=await page.evaluate(async project=>(await api('checks?project='+encodeURIComponent(project))).browser_latest,fixture.project);
+  assert.ok(failed.console_errors.includes('fixture browser error'));assert.ok(failed.layout_errors.length>0);
+  await assert.rejects(fetch(failed.url));
   assert.deepEqual(errors,[]);
-  console.log('Web UI passed: routes, model selection, checks, queue, shortcut, apply/undo, themes, no JS errors.');
+  console.log('Web UI passed: routes, checks, queue, apply/undo, themes, browser chat discovery, saved reports/screenshots, draft preservation, natural-language routing, real console/layout failures, server cleanup, no UI JS errors.');
 } catch(error) {
   if(context)await context.pages()[0]?.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});
   console.error(error);process.exitCode=1;

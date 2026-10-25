@@ -10,7 +10,8 @@
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
 - `accounts.py`: bounded native sign-in sessions, account metadata, and model catalogs.
 - `change_review.py`, `workspace_changes.py`: bounded diffs, private source checkpoints, conflict-checked apply/undo.
-- `project_checks.py`, `browser_checks.py`: independent command checks and optional Playwright flows.
+- `project_checks.py`, `browser_checks.py`: independent command checks, saved browser chat turns and automatic Playwright flows.
+- `browser_project.py`, `tools/static_preview.py`: bounded framework discovery, loopback startup, readiness and owned-process cleanup.
 - `symbol_index.py`, `model_metrics.py`, `local_resource.py`: Python symbols, observed model results, and cooperative local inference scheduling.
 - `desktop_features.py`, `assets/features.js`: on-demand checks, queue and observations interfaces.
 - `task_lock.py`: process-lifetime workspace locking and legacy stale-lock recovery.

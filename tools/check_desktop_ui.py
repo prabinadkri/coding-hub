@@ -67,6 +67,7 @@ def main():
         if path in ('accounts/input','accounts/close'): return {'ok':True}
         if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
         if path.startswith('checks?'): return {'commands':['python3 -m unittest'], 'timeout':180, 'repairs':0, 'browser':{'url':'http://127.0.0.1:3000','steps':[]}}
+        if path.startswith('browser/report?'): return {'status':'passed','url':'http://127.0.0.1:3000/','pages':[{},{}],'steps':[], 'directory':str(hub.ROOT/'docs'), 'screenshots':['desktop-workspace.png'], 'started':True}
         if path == 'checks': return body['config']
         if path == 'verify': return {'status':'passed','checks':[{'command':'python3 -m unittest','exit_code':0,'output':'Synthetic check result'}]}
         if path == 'queue': return {'paused':False,'tasks':[]}
@@ -508,7 +509,21 @@ def main():
             assert app.memory_project is None and not app.save_memory_button.get_sensitive()
             assert not app.tasks and not app.error.get_visible(), app.error.get_text()
             assert json.loads(app.draft_path.read_text())['project'] == ''
-            print(json.dumps({'rendered': 29, 'native_workflows': 'passed', 'provider_requests': 0}))
+            # Chat testing remains accessible without replacing an unsent draft.
+            deleted_projects.clear(); deleted_chats.clear()
+            app.new_task(); app.scope.set_selected(1); app.project.set_text(project)
+            app.prompt.get_buffer().set_text('Keep this draft')
+            assert app.browser_button.get_visible()
+            app.browser_button.emit('clicked'); settle(.7)
+            assert any(p=='tasks' and b and b['prompt']=='Test this website in the browser' and b['mode']=='analysis' for p,b in requests)
+            assert app.form()['prompt']=='Keep this draft'
+            assert app.browser_button.get_sensitive() and not app.error.get_visible(), app.error.get_text()
+            capture(app.window,'desktop-browser-chat.png')
+            from desktop_features import open_browser_report
+            report=open_browser_report(app,Gtk,api,project,'20261025-120000-1234abcd');settle(.3)
+            capture(report,'desktop-browser-report.png');report.close()
+            app.new_task();assert not app.browser_button.get_visible()
+            print(json.dumps({'rendered': 34, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)
             app.window.destroy()

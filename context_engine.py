@@ -426,6 +426,15 @@ class ProjectMemory:
             if safe_task:
                 from smart_presentation import read
                 turn['result'], turn['details'] = read(hub.STATE / 'tasks' / task, turn['result'])
+                try:
+                    record = hub.STATE / 'tasks' / task / 'task.json'
+                    if not record.is_symlink() and record.stat().st_size < 512 * 1024:
+                        saved = json.loads(record.read_text())
+                        browser = saved.get('browser') or (saved.get('verification') or {}).get('browser') or {}
+                        if re.fullmatch(r'[0-9]{8}-[0-9]{6}-[a-f0-9]{8}', browser.get('id', '')):
+                            turn['browser_report'] = browser['id']
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
             turns.append(turn)
         return dict(conversation, scope='general' if hub.is_general(self.project) else 'project', project=str(self.project), turns=turns, total_turns=total,
                     oldest_cursor=oldest, has_older=has_older)
