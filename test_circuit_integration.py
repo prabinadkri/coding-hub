@@ -10,7 +10,7 @@ class CircuitIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.project = self.root / 'project'
         self.studio = self.root / 'Circuit Studio'
         self.project.mkdir()
