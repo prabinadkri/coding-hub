@@ -452,3 +452,28 @@ A model's **Price verified** status means its published price is zero; it does n
 If Claude reports an expired OAuth session, open **Accounts → Claude → Sign in** and reconnect. “Sign-in saved” only indicates saved sign-in metadata; the provider confirms validity when used. ChatGPT requires an explicit model selection after subscription sign-in.
 
 The native **Open web** action uses the Linux desktop’s browser launcher and reports launch errors. Snap and Flatpak browser registrations are recognized even when the app was started over SSH. If no browser is configured, choose one in Linux **Settings → Default Apps**.
+
+## Circuit Studio integration
+
+Coding Hub can create and edit portable Circuit Studio projects through the
+same component engine and solver used by the graphical app. Install
+[Circuit Studio](https://github.com/prabinadkri/circuit-studio), then initialize a
+circuit workspace:
+
+```sh
+codehub circuit init --project /path/to/lab --studio /path/to/circuit-studio
+```
+
+Select that lab folder in Coding Hub and enable **Allow edits & commands**.
+Ask, for example: “Create a 5 V voltage divider with two 10k resistors. Verify
+2.5 V at its output, run electrical checks, and export a schematic SVG.”
+The integration supplies project instructions and commands for catalog lookup,
+transactional edits, revision checks, simulation and exports. Open the generated
+`.circuit` file in Circuit Studio to edit it graphically. Save an open editor's
+work before editing its file with an agent, then reopen the result.
+
+`codehub circuit --help` lists the commands. The integration preserves the
+existing provider permissions and model configuration; analysis-only tasks
+cannot run edit commands. Analog simulation does not imply MCU firmware
+co-simulation. See Circuit Studio's `docs/AUTOMATION.md` for JSON plans, limits
+and its optional MCP stdio adapter.

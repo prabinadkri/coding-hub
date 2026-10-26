@@ -1000,6 +1000,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action")
     sub.add_parser("status")
+    circuit = sub.add_parser('circuit', help='Create, inspect and test circuits through a project-scoped Circuit Studio installation')
+    circuit.add_argument('operation', choices=('init','catalog','new','apply','inspect','check','simulate','svg','kicad'))
+    circuit.add_argument('--project', default=os.getcwd(), help='Circuit project folder')
+    circuit.add_argument('--studio', help='Circuit Studio installation (init only)')
+    circuit.add_argument('--file', help='Project-relative .circuit filename')
+    circuit.add_argument('--plan', help='Project-relative JSON edit plan')
+    circuit.add_argument('--expected-revision', help='SHA-256 revision required for apply')
+    circuit.add_argument('--output', help='Project-relative SVG or KiCad export filename')
+    circuit.add_argument('--steps', type=int, default=1000)
+    circuit.add_argument('--time-step', type=float, default=5e-6)
     sub.add_parser("menu", help="Open the optional launcher menu")
     sub.add_parser("doctor", help="Run read-only local system checks")
     changes = sub.add_parser('changes', help='Review source changes from a saved coding task')
@@ -1065,6 +1075,9 @@ def main():
     args = parser.parse_args()
     if getattr(args, 'general', False):
         args.project = general_workspace()
+    if args.action == 'circuit':
+        from circuit_integration import run
+        return run(args)
     if args.action == 'queue':
         from queue_client import control
         print(json.dumps(control(args.operation, args.identifier), indent=2)); return 0
