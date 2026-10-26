@@ -1,5 +1,9 @@
 """Project-scoped Circuit Studio CLI integration; no changes to agent permissions."""
 import json
+import os
+import tempfile
+import webbrowser
+from urllib.parse import quote
 from pathlib import Path
 import subprocess
 import sys
@@ -29,6 +33,8 @@ wiring or changing properties. Use exact catalog types and report model limits.
 Plans are atomic; never bypass revision checks or hand-edit the XML schematic.
 Run electrical checks and verify expected voltages/currents after each change.
 Do not claim MCU firmware was simulated by the analog `simulate` command.
+When design.circuit already exists, inspect it and apply edits with its expected revision; preserve its project ID.
+When designing from the circuit assistant, keep the finished project in design.circuit so the Open circuit and Check for result buttons can find it.
 Open the resulting .circuit in Circuit Studio to edit graphically. Save and close
 an editor's unsaved work before changing its file, then reopen the generated result.
 Do not overwrite unrelated projects, existing exports or the integration config.
@@ -97,15 +103,77 @@ def command(project, operation, file=None, plan=None, expected_revision=None, ou
     return args
 
 
+def discover_studio():
+    candidate = Path(os.environ.get('CIRCUIT_STUDIO_HOME', str(Path(os.environ.get('XDG_DATA_HOME', str(Path.home()/'.local/share'))) / 'circuit-studio/current'))).expanduser()
+    if not (candidate / 'circuitctl.py').is_file() or not (candidate / 'launch.py').is_file():
+        raise ValueError('Install Circuit Studio first, then try New circuit again.')
+    return candidate.resolve()
+
+
+def workspace(project=None, studio=None):
+    """Create an isolated, ready-to-chat lab; never overwrite a user's circuit."""
+    studio = Path(studio).expanduser().resolve(strict=True) if studio else discover_studio()
+    if project is None:
+        root = Path(os.environ.get('XDG_DATA_HOME', str(Path.home()/'.local/share'))) / 'coding-hub/circuits'
+        root.mkdir(parents=True, exist_ok=True)
+        project = Path(tempfile.mkdtemp(prefix='Circuit-', dir=root))
+    project = Path(project).expanduser().resolve(strict=True)
+    if not (project / CONFIG).exists():
+        initialize(project, studio)
+    return workspace_info(project)
+
+
+def workspace_info(project):
+    project = Path(project).expanduser().resolve(strict=True)
+    command(project, 'catalog')  # Validate the integration and its installation.
+    has_circuit = inside(project, 'design.circuit').is_file()
+    return {'project': str(project), 'hasCircuit': has_circuit,
+            'prompt': ('Improve this circuit: ' if has_circuit else 'Create a circuit: '),
+            'hint': ('Describe the changes you want. Return to Circuit Studio and click Check for result when finished.' if has_circuit else 'Describe your circuit. Use Open circuit when the assistant finishes.')}
+
+
+def open_workspace(project):
+    from desktop import ensure_server
+    url = ensure_server()
+    if not webbrowser.open(url + '&circuit=' + quote(str(Path(project).resolve()), safe='')):
+        raise ValueError('The browser could not open. Open Coding Hub and choose this circuit workspace.')
+
+
+def open_circuit(project):
+    project = Path(project).expanduser().resolve(strict=True)
+    # Opening a data file must not execute a launcher selected by project content.
+    studio = discover_studio()
+    command(project, 'inspect', 'design.circuit')
+    circuit = inside(project, 'design.circuit')
+    if not circuit.is_file():
+        raise ValueError('No design.circuit yet. Ask the assistant to create your circuit first.')
+    if circuit.stat().st_size > 10_000_000:
+        raise ValueError('Circuit is larger than 10 MB')
+    value = json.loads(circuit.read_text())
+    if not isinstance(value, dict) or value.get('format') != 'circuit-studio' or value.get('version') != 2:
+        raise ValueError('Choose a valid Circuit Studio v2 project')
+    import hub
+    directory = hub.private_dir(hub.STATE / 'circuit-launch')
+    with (directory / 'launcher.log').open('a') as log:
+        subprocess.Popen([sys.executable, str(studio/'launch.py'), '--port', '0', '--project', str(circuit)], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    return {'opened': True}
+
+
 def run(args):
     try:
+        if args.operation == 'workspace':
+            result = workspace(args.project, args.studio)
+            if args.open:
+                open_workspace(result['project'])
+            print(json.dumps(result))
+            return 0
         if args.operation == 'init':
             if not args.studio:
                 raise ValueError('init requires --studio /path/to/circuit-studio')
-            print(json.dumps(initialize(args.project, args.studio), indent=2))
+            print(json.dumps(initialize(args.project or os.getcwd(), args.studio), indent=2))
             return 0
-        cmd = command(args.project, args.operation, args.file, args.plan, args.expected_revision, args.output, args.steps, args.time_step)
-        return subprocess.run(cmd, cwd=Path(args.project).expanduser().resolve(), timeout=90, check=False).returncode
-    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired) as error:
+        cmd = command(args.project or os.getcwd(), args.operation, args.file, args.plan, args.expected_revision, args.output, args.steps, args.time_step)
+        return subprocess.run(cmd, cwd=Path(args.project or os.getcwd()).expanduser().resolve(), timeout=90, check=False).returncode
+    except (OSError, ValueError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(json.dumps({'error': str(error)}), file=sys.stderr)
         return 2

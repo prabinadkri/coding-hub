@@ -85,6 +85,8 @@ def main():
         if path=='files/reveal':
             assert body['project']==project and body['task']=='files-task'
             return {'opened':body['path'],'selected':True}
+        if path == 'circuit/workspace': return {'project':project,'prompt':'Create a circuit: ','hint':'Describe your circuit.'}
+        if path == 'circuit/open': return {'opened':True}
         if path == 'checks': return body['config']
         if path == 'verify': return {'status':'passed','checks':[{'command':'python3 -m unittest','exit_code':0,'output':'Synthetic check result'}]}
         if path == 'queue': return {'paused':False,'tasks':[]}
@@ -572,6 +574,16 @@ def main():
             assert not app.error.get_visible(), app.error.get_text()
             app.file_window.close()
             app.new_task();assert not app.browser_button.get_visible()
+            app.prompt.get_buffer().set_text('Keep my earlier draft')
+            app.new_circuit();settle()
+            assert app.form()['prompt']=='Create a circuit: '
+            assert app.form()['project']==project and app.form()['scope']=='project'
+            assert app.circuit_actions.get_visible()
+            app.open_circuit();settle()
+            assert any(p=='circuit/open' for p,b in requests)
+            app.restore_circuit_draft();settle()
+            assert app.form()['prompt']=='Keep my earlier draft'
+            assert app.form()['scope']=='general'
             print(json.dumps({'rendered': 39, 'native_workflows': 'passed', 'provider_requests': 0}))
         finally:
             app.closed(app.window)

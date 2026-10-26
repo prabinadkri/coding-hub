@@ -14,13 +14,14 @@ const paths = {
 function icon(name){const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 24 24');s.setAttribute('class','icon');s.setAttribute('fill','none');s.setAttribute('stroke','currentColor');s.setAttribute('stroke-width','1.6');s.setAttribute('stroke-linecap','round');s.setAttribute('stroke-linejoin','round');s.setAttribute('aria-hidden','true');const p=document.createElementNS(s.namespaceURI,'path');p.setAttribute('d',paths[name]||paths.spark);s.append(p);return s;}
 document.querySelectorAll('[data-icon]').forEach(n=>n.replaceWith(icon(n.dataset.icon)));
 const $=id=>document.getElementById(id), activeStates=['queued','running','stopping'];
-let token=location.hash.slice(1)||sessionStorage.getItem('coding-hub-token')||'';
+const launchFragment=location.hash.slice(1).split('&'),circuitLaunch=new URLSearchParams(launchFragment.slice(1).join('&')).get('circuit');
+let token=launchFragment[0]||sessionStorage.getItem('coding-hub-token')||'';
 if(location.hash){sessionStorage.setItem('coding-hub-token',token);history.replaceState(null,'',location.pathname);}
 let conversation=null,conversationProject='',treeSignature='',chatSignature='',pendingMessage=null,messageArchive=new Map(),archiveConversation=null;
 let memoryProject=null,chatLayout=null,followChat=true,sidebarBusy=false;
 let deleteTarget=null,deleteProjectTarget=null,deletingChat=false,historyEpoch=0;
 let signinId=null,signinBusy=false,signinPollBusy=false,chosenModels={},modelSignature='';
-let submitting=false;
+let submitting=false,circuitContextProject=null;
 let route='free-auto',selected=null,tasks=[],statusData={},folderPath='',folderParent='',lastOutput='',timer,refreshBusy=false,wasConnected=false;
 const routeHelp={'smart-free':'Verified free cloud manager + free/local workers. At most two manager calls. Simple questions skip the manager. No subscription fallback.','free-auto':'Verified free coding models → local Qwen. Skips observed quota cooldowns. No subscription routes or paid model fallback.',claude:'Uses your separate Claude subscription through its official CLI. Connect in Accounts first; your plan limits apply.',openai:'Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model; availability depends on your plan.',smart:'Choose the Antigravity manager model and up to 3 cloud workers for this same task. Independent project changes run in separate copies, then are integrated and checked. Local fallback stays serial. At most 2 bounded manager calls; token savings are measured, not guaranteed.',auto:'Antigravity → verified free models → local Qwen. Continues from partial work if a provider fails.',antigravity:'Uses Google’s native CLI and your Google sign-in. Choose Flash for speed or Pro for deeper reasoning.',free:'Verifies current zero-cost pricing and retired-model status. Skips observed quota cooldowns. Choose a specific model to retry it.',local:'Qwen 3 8B runs on this computer. Best for focused tasks, with a 16K context and thinking disabled for speed.'};
 function positionTools(){
@@ -39,6 +40,7 @@ function view(name){if($('tools-menu').matches(':popover-open'))$('tools-menu').
 document.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>view(el.dataset.view)));
 function currentProject(){return conversation?conversationProject:$('project').value;}
 function syncChatLayout(){
+  updateCircuitContext();
   const existing=!!conversation;
   document.body.classList.toggle('chat-open',existing&&!$('workspace-view').hidden);
   $('workspace-view').classList.toggle('existing-chat',existing);
@@ -70,7 +72,7 @@ function saveDraft(){try{localStorage.setItem('coding-hub-draft',JSON.stringify(
 try{const d=JSON.parse(localStorage.getItem('coding-hub-draft')||'{}');chosenModels=d.chosenModels||{};$('smart-workers').value=String([1,2,3].includes(d.workers)?d.workers:1);$('task-scope').value=d.scope|| (d.project?'project':'general');conversation=d.conversation||null;conversationProject=d.conversationProject||'';$('project').value=d.project||'';if(conversation){$('project').readOnly=true;$('browse').disabled=true;}$('prompt').value=d.prompt||'';$('quality').value=d.quality==='deep'?'deep':'fast';$('allow-edits').checked=!!d.edits;$('preview-edits').checked=!!d.preview;setRoute(routeHelp[d.route]?d.route:'free-auto');mode();$('char-count').textContent=$('prompt').value.length.toLocaleString()+' / 12,000';}catch{}
 syncChatLayout();
 document.querySelectorAll('[data-prompt]').forEach(el=>el.addEventListener('click',()=>{$('prompt').value=el.dataset.prompt;$('prompt').dispatchEvent(new Event('input'));$('prompt').focus();}));
-function newTask(){followChat=true;$('chat-latest').hidden=true;view('workspace');messageArchive.clear();archiveConversation=null;conversation=null;conversationProject='';$('task-scope').value='general';pendingMessage=null;chatSignature='';$('chat-thread').hidden=true;$('chat-thread').replaceChildren();$('chat-title').textContent='New conversation';$('chat-subtitle').textContent='Choose a project and start a focused conversation.';$('chat-subtitle').title='';$('composer-title').textContent='Start a conversation';$('project').readOnly=false;$('browse').disabled=false;$('prompt').value='';selected=null;lastOutput='';syncChatLayout();$('activity-details').open=false;renderTask(null);$('prompt').dispatchEvent(new Event('input'));$('prompt').focus();treeSignature='';}
+function newTask(){$('circuit-banner').hidden=true;followChat=true;$('chat-latest').hidden=true;view('workspace');messageArchive.clear();archiveConversation=null;conversation=null;conversationProject='';$('task-scope').value='general';pendingMessage=null;chatSignature='';$('chat-thread').hidden=true;$('chat-thread').replaceChildren();$('chat-title').textContent='New conversation';$('chat-subtitle').textContent='Choose a project and start a focused conversation.';$('chat-subtitle').title='';$('composer-title').textContent='Start a conversation';$('project').readOnly=false;$('browse').disabled=false;$('prompt').value='';selected=null;lastOutput='';syncChatLayout();$('activity-details').open=false;renderTask(null);$('prompt').dispatchEvent(new Event('input'));$('prompt').focus();treeSignature='';}
 
 $('new-task').addEventListener('click',newTask);
 $('new-project').addEventListener('click',()=>{newTask();$('task-scope').value='project';syncChatLayout();$('project').value='';saveDraft();$('browse').click();});
@@ -331,3 +333,29 @@ $('run-diagnostics').addEventListener('click',async()=>{
 $('discuss-diagnostics').addEventListener('click',()=>{newTask();$('allow-edits').checked=false;mode();$('prompt').value='Help me diagnose my Linux laptop. Explain these observations and ask about symptoms when needed. Start with read-only checks; propose exact fixes for review before changing the system.\n\n'+diagnosticsText.slice(0,4800);$('prompt').dispatchEvent(new Event('input'));$('prompt').focus();});
 
 $('close-task-details').addEventListener('click',()=>$('task-details-dialog').close());
+
+let circuitOpening=false;
+function preserveCircuitDraft(){saveDraft();sessionStorage.setItem('coding-hub-before-circuit',localStorage.getItem('coding-hub-draft')||'{}');$('restore-circuit-draft').hidden=false;}
+function selectCircuitWorkspace(data){
+  preserveCircuitDraft();newTask();$('task-scope').value='project';$('project').value=data.project;syncChatLayout();
+  $('chat-title').textContent='Circuit assistant';$('chat-subtitle').textContent='Describe your circuit or the changes you want.';
+  $('prompt').value=data.prompt;$('prompt').dispatchEvent(new Event('input'));$('prompt').focus();
+  $('circuit-hint').textContent=data.hint;$('circuit-banner').hidden=false;circuitSuggestions();
+  $('preview-edits').checked=false;mode();saveDraft();
+}
+$('new-circuit').addEventListener('click',async()=>{if(circuitOpening)return;circuitOpening=true;$('new-circuit').disabled=true;try{selectCircuitWorkspace(await api('circuit/workspace',{}));}catch(e){toast(e.message,true);}finally{circuitOpening=false;$('new-circuit').disabled=false;}});
+$('open-circuit').addEventListener('click',async()=>{const button=$('open-circuit');button.disabled=true;try{await api('circuit/open',{project:currentProject()});toast('Opening your saved design in Circuit Studio.');}catch(e){toast(e.message,true);}finally{button.disabled=false;}});
+$('restore-circuit-draft').hidden=!sessionStorage.getItem('coding-hub-before-circuit');
+$('restore-circuit-draft').addEventListener('click',()=>{const previous=sessionStorage.getItem('coding-hub-before-circuit');if(previous){saveDraft();const current=localStorage.getItem('coding-hub-draft');localStorage.setItem('coding-hub-draft',previous);sessionStorage.setItem('coding-hub-before-circuit',current);location.reload();}});
+if(circuitLaunch)api('circuit/workspace?project='+encodeURIComponent(circuitLaunch)).then(selectCircuitWorkspace).catch(e=>toast('Circuit workspace could not open: '+e.message,true));
+
+function updateCircuitContext(){const project=currentProject();if(circuitContextProject===project)return;circuitContextProject=project;$('circuit-banner').hidden=true;if(!project||$('task-scope').value==='general')return;api('circuit/workspace?project='+encodeURIComponent(project)).then(data=>{if(currentProject()!==project)return;$('circuit-hint').textContent=data.hint;$('circuit-banner').hidden=false;circuitSuggestions();}).catch(()=>{});}
+$('project').addEventListener('input',updateCircuitContext);
+
+window.addEventListener('hashchange',()=>{const parts=location.hash.slice(1).split('&'),project=new URLSearchParams(parts.slice(1).join('&')).get('circuit');if(!project)return;if(parts[0]){token=parts[0];sessionStorage.setItem('coding-hub-token',token);}history.replaceState(null,'',location.pathname);api('circuit/workspace?project='+encodeURIComponent(project)).then(selectCircuitWorkspace).catch(e=>toast('Circuit workspace could not open: '+e.message,true));});
+
+function circuitSuggestions(){
+  $('project-picker').hidden=true;
+  const suggestions=[['Voltage divider','Create a 5 V voltage divider with two 10k resistors. Check the connections and verify approximately 2.5 V at the output.'],['LED indicator','Create a 5 V LED indicator with a suitable current-limiting resistor. Check the connections and report the simulated LED current.'],['RC filter','Create an RC low-pass filter using a 1k resistor and 1 µF capacitor. Check the wiring and explain its expected cutoff frequency.']];
+  document.querySelectorAll('[data-prompt]').forEach((button,i)=>{if(suggestions[i]){button.textContent=suggestions[i][0];button.dataset.prompt=suggestions[i][1];}});
+}

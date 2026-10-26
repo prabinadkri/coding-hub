@@ -68,6 +68,22 @@ class DashboardTests(unittest.TestCase):
             time.sleep(.02)
         self.fail("Task did not finish")
 
+    def test_circuit_shortcuts_require_auth_and_validate_workspace(self):
+        for endpoint in ('/api/circuit/workspace','/api/circuit/open'):
+            self.assertEqual(self.request(endpoint,{},token='')[0],401)
+            self.assertEqual(self.request(endpoint,{},origin='https://outside.example')[0],403)
+        self.assertEqual(self.request('/api/circuit/workspace?project='+str(self.project))[0],400)
+        from circuit_integration import initialize
+        studio=self.root/'studio';(studio/'docs').mkdir(parents=True)
+        (studio/'circuitctl.py').write_text('');(studio/'launch.py').write_text('')
+        (studio/'docs/AUTOMATION.md').write_text('Test reference')
+        with patch.dict('os.environ',{'CIRCUIT_STUDIO_HOME':str(studio),'XDG_DATA_HOME':str(self.root/'data')}):
+            code,value=self.request('/api/circuit/workspace',{})
+        self.assertEqual(code,200);self.assertEqual(value['prompt'],'Create a circuit: ')
+        self.assertTrue((Path(value['project'])/'CODING_HUB.md').is_file())
+        self.assertEqual(self.request('/api/circuit/open',{'project':value['project']})[0],400)
+        self.assertEqual(self.manager.list(),[])
+
     def test_unauthenticated_requests_cannot_read_history_or_start_tasks(self):
         self.assertEqual(self.request("/api/tasks", token="")[0], 401)
         self.assertEqual(self.request("/api/tasks", {"project": str(self.project), "prompt": "hello"}, token="wrong")[0], 401)

@@ -131,6 +131,29 @@ try {
   const failed=await page.evaluate(async project=>(await api('checks?project='+encodeURIComponent(project))).browser_latest,fixture.project);
   assert.ok(failed.console_errors.includes('fixture browser error'));assert.ok(failed.layout_errors.length>0);
   await assert.rejects(fetch(failed.url));
+  // Circuit shortcut creates its workspace without a folder dialog or model call.
+  await page.locator('#prompt').fill('My previous unsent circuit question');
+  const priorProject=await page.locator('#project').inputValue();
+  const permissions=await page.locator('#allow-edits').isChecked();
+  await page.locator('#new-circuit').click();await page.getByText('Circuit assistant',{exact:true}).waitFor();
+  const lab=await page.locator('#project').inputValue();assert.notEqual(lab,priorProject);
+  assert.ok(fs.existsSync(path.join(lab,'CIRCUITS.md')));
+  assert.equal(await page.locator('#prompt').inputValue(),'Create a circuit: ');
+  assert.equal(await page.locator('#allow-edits').isChecked(),permissions);
+  await page.locator('#open-circuit').click();await page.locator('#toast').filter({hasText:'No design.circuit yet'}).waitFor();
+  fs.writeFileSync(path.join(lab,'design.circuit'),JSON.stringify({format:'circuit-studio',version:2,schematic:'$ 1'}));
+  await page.locator('#open-circuit').click();await page.locator('#toast').filter({hasText:'Opening your saved design'}).waitFor();
+  const stub=JSON.parse(fs.readFileSync(path.join(lab,'circuit-studio.json'),'utf8')).studio;
+  await page.waitForTimeout(100);assert.equal(fs.readFileSync(path.join(stub,'opened'),'utf8'),path.join(lab,'design.circuit'));
+  await page.screenshot({path:path.join(output,'circuit-assistant.png')});
+  await page.locator('#restore-circuit-draft').click();await page.waitForFunction(()=>document.getElementById('prompt').value==='My previous unsent circuit question');
+  assert.equal(await page.locator('#project').inputValue(),priorProject);
+  // The exact fragment shape emitted by Circuit Studio opens the selected circuit.
+  await page.goto(fixture.url+'&circuit='+encodeURIComponent(lab));
+  await page.waitForFunction(()=>document.getElementById('prompt').value==='Improve this circuit: ');
+  assert.equal(await page.locator('#project').inputValue(),lab);
+  assert.equal(new URL(page.url()).hash,'');
+  assert.ok(await page.locator('#circuit-banner').isVisible());
   assert.deepEqual(errors,[]);
   console.log('Web UI passed: reply file previews/reveal/download, routes, checks, queue, apply/undo, themes, browser chat discovery, saved reports/screenshots, draft preservation, natural-language routing, real console/layout failures, server cleanup, no UI JS errors.');
 } catch(error) {

@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.13.1"
+VERSION = "2.14.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -520,6 +520,9 @@ class Handler(BaseHTTPRequestHandler):
                 if parsed.path.endswith('/download'):
                     return self.reply(200, reply_files.download(project, reference, task), 'application/octet-stream')
                 return self.reply(200, reply_files.describe(project, reference, task, int(query.get('offset', ['0'])[0])))
+            if parsed.path == '/api/circuit/workspace':
+                from circuit_integration import workspace_info
+                return self.reply(200, workspace_info(query.get('project', [''])[0]))
             if parsed.path == '/api/queue':
                 return self.reply(200, self.server.manager.queue())
             if parsed.path == '/api/metrics':
@@ -613,6 +616,12 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
+            if self.path == '/api/circuit/workspace':
+                from circuit_integration import workspace
+                return self.reply(200, workspace())
+            if self.path == '/api/circuit/open':
+                from circuit_integration import open_circuit
+                return self.reply(200, open_circuit(data.get('project', '')))
             if self.path == '/api/files/reveal':
                 from reply_files import reveal
                 return self.reply(200, reveal(data.get('project', ''), data.get('path'), data.get('task')))

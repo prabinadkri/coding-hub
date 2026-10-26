@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import signal
 import sys
@@ -23,6 +24,11 @@ class Cache:
 
 with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
     root=Path(temporary).resolve();hub.STATE=root/'state';project=root/'project';project.mkdir()
+    studio=root/'studio';(studio/'docs').mkdir(parents=True)
+    (studio/'circuitctl.py').write_text('')
+    (studio/'launch.py').write_text('import sys;from pathlib import Path;Path(__file__).with_name("opened").write_text(sys.argv[-1])')
+    (studio/'docs/AUTOMATION.md').write_text('Circuit test API reference')
+    os.environ['CIRCUIT_STUDIO_HOME']=str(studio);os.environ['XDG_DATA_HOME']=str(root/'data')
     (project/'source.py').write_text('answer = 1\n')
     html='<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Browser fixture</title><h1>Ready to test</h1><a href="/about.html">About</a>'
     (project/'index.html').write_text(html)

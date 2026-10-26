@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from circuit_integration import command, initialize
+from circuit_integration import command, initialize, workspace, workspace_info, open_workspace, open_circuit
 
 
 class CircuitIntegrationTests(unittest.TestCase):
@@ -16,6 +16,7 @@ class CircuitIntegrationTests(unittest.TestCase):
         self.project.mkdir()
         (self.studio / 'docs').mkdir(parents=True)
         (self.studio / 'circuitctl.py').write_text('')
+        (self.studio / 'launch.py').write_text('')
         (self.studio / 'docs/AUTOMATION.md').write_text('Local API reference')
 
     def test_init_preserves_guidance_and_refuses_overwrite(self):
@@ -69,6 +70,35 @@ class CircuitIntegrationTests(unittest.TestCase):
             command(self.project, 'shell', 'a.circuit')
         with self.assertRaises(ValueError):
             command(self.project, 'inspect')
+
+    def test_one_click_workspace_and_no_overwrite(self):
+        with patch.dict('os.environ',{'XDG_DATA_HOME':str(self.root/'data'),'CIRCUIT_STUDIO_HOME':str(self.studio)}):
+            first=workspace();second=workspace()
+        self.assertNotEqual(first['project'],second['project'])
+        self.assertEqual(first['prompt'],'Create a circuit: ')
+        project=Path(first['project']);rules=(project/'CODING_HUB.md').read_text()
+        (project/'design.circuit').write_text('{}')
+        self.assertEqual(workspace(project,self.studio)['prompt'],'Improve this circuit: ')
+        self.assertEqual((project/'CODING_HUB.md').read_text(),rules)
+        self.assertIn('design.circuit',(project/'CIRCUITS.md').read_text())
+        (project/'design.circuit').unlink();(project/'design.circuit').symlink_to(self.root/'outside')
+        with self.assertRaises(ValueError):workspace_info(project)
+
+    def test_open_launches_literal_project_and_no_model(self):
+        import hub
+        initialize(self.project,self.studio)
+        with patch.dict('os.environ',{'CIRCUIT_STUDIO_HOME':str(self.studio)}),patch.object(hub,'STATE',self.root/'private'),patch('circuit_integration.subprocess.Popen') as launch:
+            with self.assertRaisesRegex(ValueError,'No design.circuit'):open_circuit(self.project)
+            launch.assert_not_called()
+            value={'format':'circuit-studio','version':2,'schematic':'$ 1'}
+            (self.project/'design.circuit').write_text(json.dumps(value))
+            self.assertEqual(open_circuit(self.project),{'opened':True})
+            self.assertEqual(launch.call_args.args[0][-2:],['--project',str(self.project/'design.circuit')])
+            self.assertNotIn('shell',launch.call_args.kwargs)
+        with patch('desktop.ensure_server',return_value='http://127.0.0.1:1234/#fake-session'),patch('circuit_integration.webbrowser.open',return_value=True) as browser:
+            open_workspace(self.project)
+            self.assertIn('&circuit=',browser.call_args.args[0])
+            self.assertNotIn(str(self.project),browser.call_args.args[0])
 
 
 if __name__ == '__main__':

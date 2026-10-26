@@ -455,6 +455,20 @@ The native **Open web** action uses the Linux desktop’s browser launcher and r
 
 ## Circuit Studio integration
 
+Use **New circuit** in the app or browser sidebar. Coding Hub creates a ready-to-use
+workspace automatically. Describe your circuit, select your model, enable **Allow
+edits & commands**, and send. **Open circuit in Studio** opens the saved
+`design.circuit` directly. No folder selection, copied path or manual plugin setup
+is needed. **Return to previous draft** restores the draft you had before opening
+the circuit assistant. Creating/opening a workspace does not submit a model request.
+
+From Circuit Studio, use **Design with Coding Hub → Start circuit chat**. It sends
+a separate copy of the current circuit and opens the correct Coding Hub chat
+workspace. When the task finishes, return to Studio and use **Check for result →
+Bring into editor**. Studio refuses to replace a circuit edited since the handoff;
+**Save edited copy** remains available. This workflow opens Coding Hub in your
+browser; it does not embed a separate model inside Circuit Studio.
+
 Coding Hub can create and edit portable Circuit Studio projects through the
 same component engine and solver used by the graphical app. Install
 [Circuit Studio](https://github.com/prabinadkri/circuit-studio), then initialize a

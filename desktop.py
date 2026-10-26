@@ -270,7 +270,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             new.set_margin_bottom(0)
             new.set_tooltip_text('New conversation · Ctrl+N')
             sidebar.append(new)
-            sidebar.append(self.button('+  New project', self.new_project, 'new-project'))
+            creation = self.row(6)
+            for title, action in [('New circuit', self.new_circuit), ('New project', self.new_project)]:
+                button = self.button(title, action, 'new-project'); button.set_hexpand(True); creation.append(button)
+            sidebar.append(creation)
             tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE,
                                    hhomogeneous=False, vhomogeneous=False, hexpand=True, vexpand=True)
@@ -460,6 +463,11 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             body.append(composer)
             self.activity = self.label('Ready · Analysis mode reads project files. Enable edits to implement changes.', 'muted')
             body.append(self.activity)
+            self.circuit_actions=self.row(8)
+            self.circuit_actions.append(self.button('Open circuit in Studio', self.open_circuit, 'small-button'))
+            self.circuit_actions.append(self.button('Return to previous draft', self.restore_circuit_draft, 'small-button'))
+            self.circuit_actions.set_visible(False)
+            body.append(self.circuit_actions)
             self.output = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
             self.output.add_css_class('output')
             output_scroll = Gtk.ScrolledWindow(min_content_height=100, max_content_height=160)
@@ -612,6 +620,8 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             return self.conversation_project if self.conversation else self.project.get_text()
 
         def sync_chat_layout(self):
+            if hasattr(self, 'circuit_actions'):
+                self.circuit_actions.set_visible((Path(self.form()['project']) / 'circuit-studio.json').is_file() if self.form().get('scope') != 'general' else False)
             existing = bool(self.conversation)
             general = self.scope.get_selected() == 0
             self.scope_row.set_visible(not existing)
@@ -714,6 +724,49 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             dialog.show()
             self.folder_dialog = dialog
 
+        def new_circuit(self, *_):
+            if getattr(self, 'circuit_opening', False): return
+            self.circuit_opening = True
+            previous = self.form()
+            def ready(data):
+                self.circuit_opening = False
+                self.circuit_previous = previous
+                hub.save_json(hub.STATE / 'desktop' / 'before-circuit.json', previous)
+                self.new_task()
+                self.scope.set_selected(1)
+                self.project.set_text(data['project'])
+                self.prompt.get_buffer().set_text(data['prompt'])
+                self.preview_edits.set_active(False)
+                self.chat_title.set_text('Circuit assistant')
+                self.activity.set_text(data['hint'])
+                self.circuit_actions.set_visible(True)
+                self.save_draft()
+            def failed(error):
+                self.circuit_opening = False
+                self.error.set_text(str(error)); self.error.set_visible(True)
+            self.background(lambda: api('circuit/workspace', {}), ready, failed)
+
+        def open_circuit(self, *_):
+            project = self.form()['project']
+            self.background(lambda: api('circuit/open', {'project': project}), lambda _: self.activity.set_text('Opening your saved circuit in Circuit Studio.'))
+
+        def restore_circuit_draft(self, *_):
+            previous = getattr(self, 'circuit_previous', None)
+            if not previous: return
+            current = self.form()
+            self.new_task()
+            self.scope.set_selected(0 if previous.get('scope') == 'general' else 1)
+            self.project.set_text(previous.get('project', ''))
+            self.conversation = previous.get('conversation')
+            self.conversation_project = previous.get('project', '') if self.conversation else ''
+            self.prompt.get_buffer().set_text(previous.get('prompt', ''))
+            self.edits.set_active(previous.get('mode') in ('build','preview'))
+            self.preview_edits.set_active(previous.get('mode') == 'preview')
+            self.route.set_selected(routes.index(previous.get('backend', hub.DEFAULT_ROUTE)))
+            self.quality.set_selected(1 if previous.get('quality') == 'deep' else 0)
+            self.circuit_previous = current
+            self.sync_chat_layout(); self.save_draft(); self.refresh()
+
         def new_project(self, *_):
             self.new_task()
             self.scope.set_selected(1)
@@ -722,6 +775,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.browse()
 
         def new_task(self, *_):
+            self.circuit_actions.set_visible(False)
             self.follow_chat = True
             self.latest_button.set_visible(False)
             self.conversation = None

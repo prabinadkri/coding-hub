@@ -11,7 +11,7 @@
   <aside class="sidebar">
     <a class="brand" href="/" aria-label="Coding Hub home"><img src="/icon.svg" alt="" width="42" height="42"><span>Coding Hub<small>YOUR CODING WORKSPACE</small></span></a>
     <button class="new-task" id="new-task"><span data-icon="plus"></span> New chat <kbd>N</kbd></button>
-    <button id="new-project" class="new-project">+ New project</button>
+    <div class="creation-actions"><button id="new-circuit" class="new-project">New circuit</button><button id="new-project" class="new-project">New project</button></div>
     <nav aria-label="Main navigation"><button class="nav-item active" data-view="workspace"><span data-icon="grid"></span> Chats <span class="nav-dot"></span></button></nav>
     <div class="nav-label">PROJECTS & CHATS</div><p id="sidebar-status" class="tree-empty" role="status">Loading saved chats…</p><div id="project-tree" class="project-tree" aria-label="Projects and chats"></div>
     <div id="sidebar-tools" class="sidebar-tools"><button id="tools-toggle" class="tools-toggle" popovertarget="tools-menu" aria-expanded="false" aria-controls="tools-menu"><span data-icon="settings"></span> Tools &amp; settings</button><div id="tools-menu" popover="auto"><div class="tools-heading">WORKSPACE TOOLS</div><nav aria-label="Tools and settings"><button class="nav-item" data-feature="checks">Project checks</button><button class="nav-item" data-feature="queue">Task queue</button><button class="nav-item" data-feature="metrics">Model observations</button>
@@ -21,12 +21,13 @@
       <button class="nav-item" data-view="accounts"><span data-icon="lock"></span> Accounts</button>
       <button class="nav-item" data-view="guide"><span data-icon="book"></span> Quick guide</button>
     </nav></div></div>
-    <div class="sidebar-bottom"><div class="private-mark"><span data-icon="shield"></span> Your workspace stays yours</div><p>Choose local for inference on your computer. Cloud routes send your task to their provider.</p><div class="sidebar-version"><span class="online-dot"></span> Runs on your laptop <span>v2.13.1</span></div></div>
+    <div class="sidebar-bottom"><div class="private-mark"><span data-icon="shield"></span> Your workspace stays yours</div><p>Choose local for inference on your computer. Cloud routes send your task to their provider.</p><div class="sidebar-version"><span class="online-dot"></span> Runs on your laptop <span>v2.14.0</span></div></div>
   </aside>
   <main>
     <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="page-title">Chats</strong></div><div class="top-actions"><button id="theme-toggle" class="small-button" aria-pressed="false">Dark mode</button><span id="connection" class="connection"><i></i> Connecting</span><button id="refresh" class="icon-button" aria-label="Refresh model status" title="Refresh model status"><span data-icon="refresh"></span></button></div></header>
     <div class="content">
       <section id="workspace-view" class="view">
+        <div id="circuit-banner" class="circuit-banner" hidden><span id="circuit-hint"></span><button id="open-circuit" type="button" class="small-button">Open circuit in Studio</button></div><button id="restore-circuit-draft" class="small-button" hidden>Return to previous draft</button>
         <div class="hero compact-hero"><div><div class="eyebrow">WORKSPACE</div><h1 id="chat-title">New conversation</h1><p id="chat-subtitle">Choose a project and start a focused conversation.</p></div><button id="open-memory" class="small-button">Project memory</button></div>
         <section id="chat-thread" class="chat-thread" aria-label="Conversation messages" hidden></section><button id="chat-latest" class="small-button" hidden>↓ Latest messages</button>
         <div class="work-grid">
