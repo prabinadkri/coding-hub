@@ -9,6 +9,8 @@
 - `free_quota.py`: read-only OpenCode usage metadata, rate-limit observations, and expected UTC reset timing.
 - `quota.py`: official Antigravity `/usage` integration and cached limits.
 - `accounts.py`: bounded native sign-in sessions, account metadata, and model catalogs.
+- `mcp_connections.py`, `mcp_gateway.py`, `mcp_transport.py`, `mcp_github.py`: private workspace MCP settings, lazy tool discovery, bounded transports, and read-only GitHub through the native CLI. Managers remain MCP-free.
+- `desktop_mcp.py`, `assets/mcp.js`: shared app/web connection management.
 - `change_review.py`, `workspace_changes.py`: bounded diffs, private source checkpoints, conflict-checked apply/undo.
 - `project_checks.py`, `browser_checks.py`: independent command checks, saved browser chat turns and automatic Playwright flows.
 - `browser_project.py`, `tools/static_preview.py`: bounded framework discovery, loopback startup, readiness and owned-process cleanup.

@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.14.0"
+VERSION = "2.15.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -523,6 +523,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == '/api/circuit/workspace':
                 from circuit_integration import workspace_info
                 return self.reply(200, workspace_info(query.get('project', [''])[0]))
+            if parsed.path == '/api/mcp':
+                from mcp_connections import snapshot
+                return self.reply(200, snapshot(hub.general_workspace() if query.get('scope') == ['general'] else query.get('project', [''])[0]))
             if parsed.path == '/api/queue':
                 return self.reply(200, self.server.manager.queue())
             if parsed.path == '/api/metrics':
@@ -594,7 +597,7 @@ class Handler(BaseHTTPRequestHandler):
                 children = sorted((p for p in folder.iterdir() if not p.name.startswith(".") and p.is_dir()), key=lambda p: p.name.lower())[:200]
                 return self.reply(200, {"path": str(folder), "parent": str(folder.parent),
                                         "folders": [{"name": p.name, "path": str(p)} for p in children]})
-            static = {"/": "index.html", "/app.js": "app.js", "/features.js": "features.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}
+            static = {"/": "index.html", "/app.js": "app.js", "/features.js": "features.js", "/mcp.js": "mcp.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}
             if parsed.path in static:
                 path = ASSETS / static[parsed.path]
                 return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream")
@@ -625,6 +628,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/files/reveal':
                 from reply_files import reveal
                 return self.reply(200, reveal(data.get('project', ''), data.get('path'), data.get('task')))
+            if self.path == '/api/mcp':
+                from mcp_connections import action
+                return self.reply(200, action(data.get('project', ''), data.get('action'), data.get('connection'), data.get('name')))
             if self.path == '/api/queue':
                 return self.reply(200, self.server.manager.control_queue(data))
             if self.path == '/api/checks':

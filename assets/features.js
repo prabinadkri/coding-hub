@@ -86,6 +86,7 @@ async function openReplyFile(project,task,reference,offset=0){
   }catch(e){if(generation!==featuresGeneration)return;body.replaceChildren(featureElement('p',e.message),featureElement('p',reference,'file-path'),featureButton('Open project folder',()=>openReplyFile(project,task,project)),featureButton('Retry',()=>openReplyFile(project,task,reference,offset)),featureButton('Copy reference',()=>navigator.clipboard.writeText(reference)));}
 }
 async function workspaceFeature(name) {
+  if(name==='mcp')return openMcp();
   releaseBrowserImages();
   const generation=++featuresGeneration, dialog=$('features-dialog'),body=$('features-body');
   $('features-title').textContent={checks:'Project checks',queue:'Task queue',metrics:'Model observations'}[name];

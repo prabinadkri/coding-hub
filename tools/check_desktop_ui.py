@@ -57,6 +57,7 @@ def main():
     sample_conversation = json.loads(json.dumps(conversation))
     requests = []
     posted_tasks = []
+    mcp_items = []
     deleted_chats = set()
     deleted_projects = set()
 
@@ -66,6 +67,15 @@ def main():
         if path.startswith('accounts/session'): return {'id':'preview-signin','running':True,'screen':'Choose Google OAuth to continue','links':[]}
         if path in ('accounts/input','accounts/close'): return {'ok':True}
         if path.startswith('changes?'): return {'files':[{'path':'src/dashboard.py','status':'modified','added':1,'removed':1,'diff':'--- a/src/dashboard.py\n+++ b/src/dashboard.py\n@@ -1 +1 @@\n-old_layout()\n+compact_layout()\n'}], 'limited':False, 'note':'Source files changed during this task.'}
+        if path.startswith('mcp?'): return {'project':project,'connections':list(mcp_items),'note':'Workspace connections. GitHub is read-only; custom servers need edits & commands.'}
+        if path == 'mcp':
+            if body['action']=='save':mcp_items.append(dict(body['connection'],enabled=True,tools=[]))
+            elif body['action']=='test':return {'ok':True,'name':body['name'],'identity':'fixture-user','tools':[{'name':'repository','description':'Read repository'}]}
+            elif body['action']=='delete':mcp_items[:]=[v for v in mcp_items if v['name']!=body['name']]
+            else:
+                for item in mcp_items:
+                    if item['name']==body['name']:item['enabled']=body['action']=='enable'
+            return {'project':project,'connections':list(mcp_items),'note':'Workspace connections.'}
         if path.startswith('checks?'): return {'commands':['python3 -m unittest'], 'timeout':180, 'repairs':0, 'browser':{'url':'http://127.0.0.1:3000','steps':[]}}
         if path.startswith('browser/report?'): return {'status':'passed','url':'http://127.0.0.1:3000/','pages':[{},{}],'steps':[], 'directory':str(hub.ROOT/'docs'), 'screenshots':['desktop-workspace.png'], 'started':True}
         if path.startswith('files/preview?'):
@@ -175,7 +185,7 @@ def main():
             assert not app.tools_popover.get_visible()
             app.stack.set_visible_child_name('workspace')
             from desktop_features import open_tool
-            for feature in ('checks', 'queue', 'metrics'):
+            for feature in ('checks', 'queue', 'metrics', 'mcp'):
                 panel = open_tool(app, Gtk, api, feature)
                 settle(.3)
                 assert not app.error.get_visible(), app.error.get_text()
@@ -190,6 +200,17 @@ def main():
                     run.emit('clicked'); settle(.3)
                     assert any(p=='verify' and b['project']==project for p,b in requests)
                     assert not app.error.get_visible(), app.error.get_text()
+                if feature == 'mcp':
+                    def click(label):
+                        next(w for w in descendants(panel) if isinstance(w,Gtk.Button) and w.get_label()==label).emit('clicked');settle(.3)
+                    click('Connect GitHub');click('Test connection')
+                    assert any(isinstance(w,Gtk.Label) and 'fixture-user' in w.get_text() for w in descendants(panel))
+                    click('Disable');click('Enable')
+                    capture(panel, 'desktop-mcp-connected.png')
+                    click('Add custom server')
+                    assert any(isinstance(w,Gtk.TextView) and w.get_visible() for w in descendants(panel))
+                    click('Cancel');click('Delete');click('Confirm delete')
+                    assert not mcp_items
                 capture(panel, 'desktop-feature-' + feature + '.png')
                 panel.close()
             app.route.set_selected(hub.ROUTES.index('smart-free'))

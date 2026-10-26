@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
     server=dashboard.DashboardServer(('127.0.0.1',0),manager=manager,status=status,token='fixture-token')
     server.quota=Cache({});server.free_quota=Cache({})
     signal.signal(signal.SIGTERM,lambda *_:threading.Thread(target=server.shutdown,daemon=True).start())
-    print(json.dumps({'url':f'http://127.0.0.1:{server.server_port}/#fixture-token','project':str(project),'conversation':conversation}),flush=True)
+    print(json.dumps({'url':f'http://127.0.0.1:{server.server_port}/#fixture-token','project':str(project),'conversation':conversation,'mcp_command':[sys.executable,str(hub.ROOT/'tools/mcp_fixture.py')]}),flush=True)
     try: server.serve_forever()
     finally:
         manager.close();server.accounts.close();server.server_close()

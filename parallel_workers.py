@@ -126,7 +126,7 @@ def integrate(project, baseline, changes):
         raise
 
 
-def run(project, request, plan, context, folder, quality, workers, cloud, baseline):
+def run(project, request, plan, context, folder, quality, workers, cloud, baseline, mcp_project=None):
     from smart_route import clipped
     work = assignments(plan, workers)
     cancel = threading.Event()
@@ -163,7 +163,7 @@ def run(project, request, plan, context, folder, quality, workers, cloud, baseli
                 print(f'[Smart worker {number}/{len(work)}] {backend} → {model} · {assignment["goal"][:100]}', flush=True)
                 log = folder / f'smart-worker-{number}-{backend}.log'
                 code, text, error = hub.run_process(hub.command(backend, model, prompt, apply=True, project=workspace),
-                    workspace, hub.clean_environment(backend, model, True), log, render_reply=False, cancel_event=cancel, quiet=True)
+                    workspace, hub.clean_environment(backend, model, True, project=mcp_project or project), log, render_reply=False, cancel_event=cancel, quiet=True)
                 failure = hub.classify_failure(code, text, error)
                 output = hub.assistant_result(log, text)
                 attempts.append({'worker': number, 'backend': backend, 'model': model, 'exit_code': code, 'failure': failure})

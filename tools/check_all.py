@@ -113,6 +113,7 @@ def main():
             check('python-cli-api', [sys.executable, '-m', 'unittest', 'discover', '-p', 'test_*.py', '-v'])
             check('javascript-syntax', [shutil.which('node') or 'node', '--check', 'assets/app.js'])
             check('workspace-tools-syntax', [shutil.which('node') or 'node', '--check', 'assets/features.js'])
+            check('mcp-interface-syntax', [shutil.which('node') or 'node', '--check', 'assets/mcp.js'])
             check('browser-runner-syntax', [shutil.which('node') or 'node', '--check', 'tools/browser_check.mjs'])
         if not args.no_gui and check('gtk-dependencies', [sys.executable, '-c',
                 "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk"]):

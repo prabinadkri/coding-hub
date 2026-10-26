@@ -111,8 +111,10 @@ def local_models():
     return [item.get("name") for item in get_json("http://127.0.0.1:11434/api/tags", 3).get("models", [])]
 
 
-def clean_environment(backend, model=None, apply=False, general=False):
+def clean_environment(backend, model=None, apply=False, general=False, project=None):
     env = dict(os.environ)
+    import mcp_connections
+    mcp_enabled = mcp_connections.prepare(env, backend, project, apply)
     if backend == 'claude':
         # A separate subscription route: do not silently pick up API billing.
         for key in tuple(env):
@@ -147,6 +149,10 @@ def clean_environment(backend, model=None, apply=False, general=False):
                         "compaction": {"model": full_model},
                         "title": {"model": full_model}, "summary": {"model": full_model}},
               "compaction": {"auto": True, "prune": True, "reserved": 6144}}
+    if mcp_enabled:
+        entry = mcp_connections.native_entry()
+        config['mcp'] = {mcp_connections.NAME: {'type': 'local', 'command': [entry['command'], *entry['args']], 'enabled': True}}
+        permission[mcp_connections.NAME + '_*'] = 'allow'
     if backend == "local":
         # Avoid extra model calls and a large generic prompt on a CPU-limited 8B model.
         config["agent"].update({"title": {"disable": True}, "summary": {"disable": True}})
@@ -188,11 +194,16 @@ def clean_environment(backend, model=None, apply=False, general=False):
     return env
 
 
-def command(backend, model, prompt, apply=False, interactive=False, project=None):
+def command(backend, model, prompt, apply=False, interactive=False, project=None, mcp_project=None):
     if backend == 'claude':
+        import mcp_connections
         allowed = 'Read,Glob,Grep' + (',Edit,Write,Bash' if apply else '')
+        mcp = {}
+        if mcp_project and any(v['enabled'] and (apply or v['type'] == 'github') for v in mcp_connections.connections(mcp_project)):
+            mcp[mcp_connections.NAME] = mcp_connections.native_entry()
+        granted = allowed + (',mcp__' + mcp_connections.NAME + '__*' if mcp else '')
         return [executable('claude'), '-p', prompt, '--model', model, '--output-format', 'json',
-                '--tools', allowed, '--allowedTools', allowed, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+                '--tools', allowed, '--allowedTools', granted, '--strict-mcp-config', '--mcp-config', json.dumps({'mcpServers': mcp}),
                 '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--no-session-persistence']
     if backend == "antigravity":
         exe = executable("agy")
@@ -287,6 +298,8 @@ def classify_failure(code, text, structured_error=False):
         return "canceled"
     if code == 124:
         return "timeout"
+    if 'no output produced' in text.lower() and 'headless mode cannot prompt' in text.lower():
+        return "permission"
     if code == 0 and not structured_error:
         return None
     lower = text.lower()
@@ -638,7 +651,7 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
         if backend in ("smart", "smart-free"):
             from smart_route import execute
             options = {'manager_backend': 'free'} if backend == 'smart-free' else {}
-            result = execute(project, request, quality, apply, context, folder, model=model, workers=workers, **options)
+            result = execute(project, request, quality, apply, context, folder, model=model, workers=workers, mcp_project=original_project, **options)
             result['output'], result['code'] = checked(result['output'], result['code'])
             if result['code'] == 3: result['status'] = 'needs_review'
             if result['code'] == 130: result['status'] = 'canceled'
@@ -659,10 +672,10 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
                       "Verify current files before editing. Write a concise, readable final reply: lead with the outcome, explain meaningful changes and actual checks, and mention unresolved issues only when present. Use Markdown headings or bullets when useful, fenced code with language names, and relative file paths. Do not include raw tool events, hidden reasoning, or empty template sections.\n\n" + context)
             if general:
                 prompt = general_instructions() + '\n\n' + prompt
-            args = command(route, model, prompt, apply, project=project)
+            args = command(route, model, prompt, apply, project=project, mcp_project=original_project)
             log = folder / f"{number}-{route}.log"
             try:
-                code, output, error = run_process(args, project, clean_environment(route, model, apply, general=general), log)
+                code, output, error = run_process(args, project, clean_environment(route, model, apply, general=general, project=original_project), log)
             except OSError as problem:
                 code, output, error = 1, str(problem), True
             failure = classify_failure(code, output, error)
@@ -735,9 +748,9 @@ def open_agent(project, backend, quality):
     if not routes:
         return 2
     route, model = routes[0]
-    env = clean_environment(route, model, True, general=is_general(project))
+    env = clean_environment(route, model, True, general=is_general(project), project=project)
     env["PWD"] = str(project)
-    if route != "antigravity":
+    if route in ("free", "local", "openai"):
         config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
         config["permission"]["bash"] = "ask"
         config["permission"]["edit"] = "ask"
@@ -751,7 +764,7 @@ def open_agent(project, backend, quality):
         env["OPENCODE_PERMISSION"] = json.dumps(config["permission"])
     print(f"Opening {route} with {model}. Use its normal permission prompts; /exit returns here.")
     with project_lock(project):
-        return subprocess.call(command(route, model, "", interactive=True, project=project), cwd=project, env=env)
+        return subprocess.call(command(route, model, "", interactive=True, project=project, mcp_project=project), cwd=project, env=env)
 
 
 def menu():
@@ -911,6 +924,11 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
                 if name == '/changes':
                     from change_review import show
                     show(memory.project); continue
+                if name == '/mcp':
+                    import mcp_connections, shlex
+                    try: mcp_connections.cli(shlex.split(argument), project=memory.project)
+                    except SystemExit: pass
+                    continue
                 if name in ('/files', '/reveal'):
                     import reply_files
                     turns = memory.messages(conversation, limit=1)['turns'] if conversation else []
@@ -997,9 +1015,13 @@ def chat(project, backend=DEFAULT_ROUTE, quality="fast", apply=False, resume=Fal
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == 'mcp':
+        import mcp_connections
+        return mcp_connections.cli(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action")
     sub.add_parser("status")
+    sub.add_parser("mcp", help="Manage project MCP connections; codehub mcp --help")
     circuit = sub.add_parser('circuit', help='Create, inspect and test circuits through a project-scoped Circuit Studio installation')
     circuit.add_argument('operation', choices=('init','workspace','catalog','new','apply','inspect','check','simulate','svg','kicad'))
     circuit.add_argument('--project', help='Circuit project folder (workspace creates one if omitted)')

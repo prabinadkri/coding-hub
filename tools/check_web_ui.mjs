@@ -30,6 +30,18 @@ try {
   await page.locator('#theme-toggle').click();await page.screenshot({path:path.join(output,'new-chat-dark.png')});
   await page.locator('#theme-toggle').click();
   async function open(name) {await page.locator('#tools-toggle').click();await page.locator(`[data-feature="${name}"]`).click();}
+  await open('mcp');await page.getByRole('button',{name:'Connect GitHub',exact:true}).click();
+  await page.getByRole('button',{name:'Disable',exact:true}).click();
+  await page.getByRole('button',{name:'Enable',exact:true}).click();
+  await page.getByRole('button',{name:'Add custom server',exact:true}).click();
+  await page.getByLabel('Connection JSON').fill(JSON.stringify({name:'fixture',type:'stdio',command:fixture.mcp_command,tools:['echo']}));
+  await page.getByRole('button',{name:'Save connection',exact:true}).click();
+  const mcpCard=page.locator('.feature-card').filter({has:page.locator('strong').filter({hasText:/^fixture$/})});
+  await mcpCard.getByRole('button',{name:'Test connection',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Connected to fixture · 1 tools'}).waitFor();
+  await page.screenshot({path:path.join(output,'mcp-connections.png')});
+  page.once('dialog',dialog=>dialog.accept());await mcpCard.getByRole('button',{name:'Delete',exact:true}).click();
+  await mcpCard.waitFor({state:'detached'});await page.locator('#features-close').click();
   await open('checks');await page.getByLabel('Check commands (one per line)').fill('python3 -c "print(123)"');
   await page.getByRole('button',{name:'Run checks',exact:true}).click();
   await page.locator('.feature-output').filter({hasText:'passed'}).waitFor();

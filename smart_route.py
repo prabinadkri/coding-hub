@@ -210,7 +210,7 @@ def command_receipts(log):
     return clipped('\n'.join(receipts), 3500) or 'No shell command results were observed.'
 
 
-def execute(project, request, quality, apply, context, folder, model=None, workers=1, manager_backend='antigravity'):
+def execute(project, request, quality, apply, context, folder, model=None, workers=1, manager_backend='antigravity', mcp_project=None):
     if manager_backend not in ('antigravity', 'free'):
         raise ValueError('Choose a supported manager provider.')
     manage = free_manager if manager_backend == 'free' else manager
@@ -278,7 +278,7 @@ def execute(project, request, quality, apply, context, folder, model=None, worke
         else:
             report['parallel_workers'] = len(plan['tasks'])
             print('[Smart parallel] Starting ' + str(len(plan['tasks'])) + ' independent assignments for this task.', flush=True)
-            parallel_results, integrated, parallel_summary = parallel_workers.run(project, request, plan, context, folder, quality, workers, cloud, baseline)
+            parallel_results, integrated, parallel_summary = parallel_workers.run(project, request, plan, context, folder, quality, workers, cloud, baseline, mcp_project=mcp_project)
             report['assignments'] = [{key: value for key, value in r.items() if key != 'changes'} for r in parallel_results]
             for result in parallel_results:
                 report['worker_attempts'].extend(result['attempts'])
@@ -304,7 +304,7 @@ def execute(project, request, quality, apply, context, folder, model=None, worke
             log = folder / f"smart-worker-{len(report['worker_attempts']) + 1}.log"
             args = hub.command(backend, model, worker_prompt, apply=apply, project=project)
             try:
-                code, text, error = hub.run_process(args, project, hub.clean_environment(backend, model, apply, general=hub.is_general(project)), log, render_reply=False)
+                code, text, error = hub.run_process(args, project, hub.clean_environment(backend, model, apply, general=hub.is_general(project), project=mcp_project or project), log, render_reply=False)
             except OSError as problem:
                 code, text, error = 1, str(problem), True
             failure = hub.classify_failure(code, text, error)

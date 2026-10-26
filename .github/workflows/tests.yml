@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -p 'test_*.py' -v
-      - run: node --check assets/app.js && node --check assets/features.js && node --check tools/browser_check.mjs
+      - run: node --check assets/app.js && node --check assets/features.js && node --check assets/mcp.js && node --check tools/browser_check.mjs
   native-ui:
     runs-on: ubuntu-latest
     steps:

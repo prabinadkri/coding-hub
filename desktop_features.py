@@ -4,6 +4,9 @@ from urllib.parse import quote
 
 
 def open_tool(app, Gtk, api, name):
+    if name == 'mcp':
+        from desktop_mcp import open_connections
+        return open_connections(app, Gtk, api)
     title = {'checks': 'Project checks', 'queue': 'Task queue', 'metrics': 'Model observations'}[name]
     window = Gtk.Window(title=title, transient_for=app.window, modal=True, default_width=740, default_height=740)
     window.add_css_class('coding-hub')

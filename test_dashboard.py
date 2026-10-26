@@ -68,6 +68,21 @@ class DashboardTests(unittest.TestCase):
             time.sleep(.02)
         self.fail("Task did not finish")
 
+    def test_mcp_connections_are_authenticated_project_scoped_and_general_supported(self):
+        from urllib.parse import urlencode
+        payload = {'project': str(self.project), 'action': 'save', 'connection': {'name': 'github', 'type': 'github'}}
+        self.assertEqual(self.request('/api/mcp', payload, token='')[0], 401)
+        self.assertEqual(self.request('/api/mcp', payload, origin='https://outside.example')[0], 403)
+        self.assertEqual(self.request('/api/mcp', token='')[0], 401)
+        self.assertEqual(self.request('/api/mcp', payload)[0], 200)
+        code, data = self.request('/api/mcp?' + urlencode({'project': str(self.project)}))
+        self.assertEqual((code, data['connections'][0]['name']), (200, 'github'))
+        code, data = self.request('/api/mcp?scope=general')
+        self.assertEqual(code, 200)
+        self.assertTrue(hub.is_general(data['project']))
+        self.assertEqual(data['connections'], [])
+        self.assertEqual(self.manager.list(), [])
+
     def test_circuit_shortcuts_require_auth_and_validate_workspace(self):
         for endpoint in ('/api/circuit/workspace','/api/circuit/open'):
             self.assertEqual(self.request(endpoint,{},token='')[0],401)

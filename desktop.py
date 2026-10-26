@@ -292,7 +292,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 button.set_child(row)
                 self.navigation[name] = button
                 (sidebar if name == 'workspace' else tools_box).append(button)
-            for name, title in (('checks', 'Project checks'), ('queue', 'Task queue'), ('metrics', 'Model observations')):
+            for name, title in (('mcp', 'MCP connections'), ('checks', 'Project checks'), ('queue', 'Task queue'), ('metrics', 'Model observations')):
                 def open_feature(*_, name=name):
                     from desktop_features import open_tool
                     open_tool(self, Gtk, api, name)

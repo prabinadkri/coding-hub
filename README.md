@@ -18,6 +18,7 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 
 - Project → chat navigation in the native app and browser, with saved messages, follow-up replies, earlier-message loading, live output, cancellation, and draft recovery.
 - Persistent project instructions, pinned requirements, searchable conversation checkpoints, and a local source index for focused context.
+- Project-scoped MCP connections: read-only GitHub through your existing GitHub CLI sign-in, plus trusted local and HTTP servers, with lazy tool discovery for small models.
 - A Usage & limits page: live Antigravity quotas, free-model local usage and observed retry times, expected daily reset countdowns, and local Qwen status.
 - Opt-in Smart routing: Antigravity makes a short plan and reviews evidence; verified free models or local Qwen perform the work, with measured manager token usage and at most two manager calls.
 - Automatic fallback: Antigravity → currently verified free OpenCode models → local Qwen3 8B. A handoff preserves the original task and partial changes.
@@ -26,6 +27,49 @@ The native Linux app uses the same workspace organization, with dedicated pages 
 - NVIDIA status, actual model offload, memory usage, and a button to release the local model from memory.
 - A lightweight Python backend and plain HTML/CSS/JavaScript, with no package installation or npm build required. Sign-in terminal rendering bundles unmodified `pyte` and `wcwidth`; source and licenses are in `vendor/`.
 - A native Linux app window using GTK 4, with its own icon, plus a terminal menu and command-line interface.
+
+## MCP connections
+
+Open **Tools & settings → MCP connections** in the app or browser. Connections belong to the current project; General tasks have their own connections. Click **Connect GitHub**, then **Test connection** to verify access and see the selected account. **Enable**, **Disable**, **Edit**, and **Delete** apply to this workspace only. Changes take effect on the next task; disabling an existing connection also blocks subsequent bridge calls in a running task.
+
+In a terminal chat, use `/mcp`, `/mcp github`, or `/mcp test github`. From a shell:
+
+```sh
+codehub mcp github --project /path/to/project
+codehub mcp test github --project /path/to/project
+codehub mcp list --general
+codehub mcp disable github --project /path/to/project
+```
+
+Then ask in chat: **“Use the GitHub connection to review the open pull requests in owner/repository.”** The bundled GitHub adapter reads repositories, issues, PRs, changed files, checks, and text files. It is a small Coding Hub adapter, not GitHub's official MCP server. It uses `gh` in the **original project directory**, preserving project-specific account wrappers even when workers run in private copies. Run `gh auth login` if needed. It never extracts your token or creates, edits, comments, merges, or pushes through its tools. File/PR results are bounded and list tools return the first 20 entries; they are not exhaustive exports.
+
+For another service, choose **Add custom server** and paste one connection. Install the service's supported MCP executable first; saving a connection does not install packages. Example stdio configuration:
+
+```json
+{
+  "name": "my-service",
+  "type": "stdio",
+  "command": ["/absolute/path/to/mcp-server", "--stdio"],
+  "env": {"SERVICE_API_KEY": "MY_SERVICE_KEY"},
+  "tools": ["search", "read_document"]
+}
+```
+
+`env` maps the server's variable to an existing variable in Coding Hub's environment. `headers` does the same for an HTTP connection; for example `"headers": {"Authorization": "MY_MCP_AUTH_HEADER"}` reads the complete header value from that variable. **Store variable names here, never tokens.** Set these variables in the environment that launches the app or CLI, then restart it. Anonymous HTTP needs no headers:
+
+```json
+{"name": "my-service", "type": "http", "url": "https://your-service.example/mcp", "tools": []}
+```
+
+The URL must use HTTPS, except HTTP on localhost. An empty `tools` list permits all tools advertised by that server; a nonempty list restricts calls to those exact names. The same JSON can be saved outside your repository and added with `codehub mcp add --project /path/to/project --config /path/to/connection.json`. Test connects to the server and lists tools without an AI request. Custom commands are executed without a shell, in the active worker directory. Use only servers and commands you trust: MCP is not a sandbox, and a custom service may change external data. Custom connections require **Allow edits & commands**; external changes cannot be rolled back by source Preview/Undo.
+
+The bridge works through OpenCode (free, Ollama, and ChatGPT routes), Claude's strict task MCP config, and Antigravity. It advertises just three small discovery/call tools, loads at most five upstream schemas per discovery page, keeps at most two server processes warm per worker, limits results to 16,000 characters, and closes owned processes when the task ends. Up to eight connections can be saved per workspace. Smart workers receive connections; Smart managers remain tool-free. This reduces eager context loading, but does not promise fewer total tokens for every task.
+
+Configuration lives in Coding Hub's private state directory, outside your source repository. For Antigravity, the Hub merges a single `coding_hub_tools` entry into `~/.gemini/config/mcp_config.json`, preserving other entries, and adds the narrow `mcp(coding_hub_tools/*)` allow rule in its CLI settings so headless analysis can call the bridge. Existing ask/deny rules remain authoritative. The bridge exposes no tools outside explicitly scoped Hub task environments. OpenCode and Claude receive task-specific configuration. Existing native-provider connections are not imported or managed by this panel.
+
+Current bridge scope: MCP **tools** over stdio or Streamable HTTP, including HTTP event-stream responses. Interactive remote OAuth, legacy SSE endpoints, MCP resource/prompt browsing, sampling, elicitation, and rich image results are not implemented. For services requiring OAuth, use their vendor-supported local MCP command with its own native sign-in, if available. The bridge does not proxy provider account credentials. MCP itself does not charge a model fee; connected services can impose their own pricing and quotas.
+
+Protocol and native-client references: [MCP transports](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports), [OpenCode MCP](https://opencode.ai/docs/en/mcp-servers), [Claude MCP](https://code.claude.com/docs/en/mcp), [Antigravity MCP](https://www.antigravity.google/docs/mcp).
 
 ## How to use the app, browser, and CLI
 
