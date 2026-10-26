@@ -16,7 +16,7 @@ class CircuitIntegrationTests(unittest.TestCase):
         self.project.mkdir()
         (self.studio / 'docs').mkdir(parents=True)
         (self.studio / 'circuitctl.py').write_text('')
-        (self.studio / 'docs/AUTOMATION.md').write_text('')
+        (self.studio / 'docs/AUTOMATION.md').write_text('Local API reference')
 
     def test_init_preserves_guidance_and_refuses_overwrite(self):
         rules = self.project / 'CODING_HUB.md'
@@ -24,6 +24,8 @@ class CircuitIntegrationTests(unittest.TestCase):
         initialize(self.project, self.studio)
         self.assertTrue(rules.read_text().startswith('User requirements must remain verbatim.\n'))
         self.assertIn('CIRCUITS.md', rules.read_text())
+        self.assertEqual((self.project / 'CIRCUIT_API.md').read_text(), 'Local API reference')
+        self.assertIn('CIRCUIT_API.md', (self.project / 'CIRCUITS.md').read_text())
         before = rules.read_bytes()
         with self.assertRaises(ValueError):
             initialize(self.project, self.studio)

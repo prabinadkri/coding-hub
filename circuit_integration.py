@@ -11,7 +11,8 @@ This project is connected to Circuit Studio. Enable **Allow edits & commands**
 when asking an agent to create or edit circuits; analysis-only mode cannot run tools.
 
 Use `codehub circuit catalog --project .` to discover real component types.
-Read the configured Studio's `docs/AUTOMATION.md` for the version 1 JSON plan format.
+Read this project's `CIRCUIT_API.md` for the version 1 JSON plan format.
+Start from `circuit-example.json` when that example is supplied by the installation.
 Create a plan JSON in this project, then run:
 
 ```
@@ -52,15 +53,21 @@ def initialize(project, studio):
     config = project / CONFIG
     guide = project / 'CIRCUITS.md'
     rules = project / 'CODING_HUB.md'
-    if config.exists() or config.is_symlink() or guide.exists() or guide.is_symlink() or rules.is_symlink():
+    api_doc = project / 'CIRCUIT_API.md'
+    example = project / 'circuit-example.json'
+    if any(p.exists() or p.is_symlink() for p in (config, guide, api_doc, example)) or rules.is_symlink():
         raise ValueError('Integration files already exist or guidance is a symlink; existing files were preserved')
     prior = rules.read_text() if rules.exists() else '# Project instructions\n'
     addition = '\n\n## Circuit Studio\nFor circuit design tasks, read CIRCUITS.md and circuit-studio.json. Use the structured circuit commands, inspect revisions before editing, and report validation results.\n'
     # Explicit init is the only operation that installs project guidance.
     config.write_text(json.dumps({'version': 1, 'studio': str(studio)}, indent=2) + '\n')
     guide.write_text(GUIDE)
+    api_doc.write_text((studio / 'docs/AUTOMATION.md').read_text())
+    sample = studio / 'examples/automation/voltage-divider.json'
+    if sample.is_file():
+        example.write_text(sample.read_text())
     rules.write_text(prior + addition)
-    return {'project': str(project), 'studio': str(studio), 'created': [CONFIG, 'CIRCUITS.md'], 'guidance': 'CODING_HUB.md'}
+    return {'project': str(project), 'studio': str(studio), 'created': [CONFIG, 'CIRCUITS.md', 'CIRCUIT_API.md'] + (['circuit-example.json'] if example.exists() else []), 'guidance': 'CODING_HUB.md'}
 
 
 def command(project, operation, file=None, plan=None, expected_revision=None, output=None, steps=1000, time_step=5e-6):
