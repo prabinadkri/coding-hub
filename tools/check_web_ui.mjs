@@ -15,7 +15,7 @@ let browser,context;
 const deadline=setTimeout(()=>{server.kill();process.exitCode=1;console.error('Web test timed out');browser?.close();},150000);
 try {
   const [line]=await once(lines,'line'), fixture=JSON.parse(line);
-  browser=await chromium.launch({headless:true});context=await browser.newContext({viewport:{width:1365,height:900}});
+  browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_BIN||undefined});context=await browser.newContext({viewport:{width:1365,height:900}});
   await context.tracing.start({screenshots:true,snapshots:true,sources:false});
   const page=await context.newPage(),errors=[];
   page.on('pageerror',error=>errors.push(error.message));page.setDefaultTimeout(10000);

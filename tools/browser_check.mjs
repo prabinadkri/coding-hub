@@ -7,7 +7,7 @@ const result = {status:'failed', steps:[], pages:[], console_errors:[], page_err
 let browser, context;
 try {
   const {chromium} = await import('playwright');
-  browser = await chromium.launch({headless:true});
+  browser = await chromium.launch({headless:true,executablePath:process.env.CHROME_BIN||undefined});
   context = await browser.newContext({viewport:{width:1365,height:900}});
   await context.tracing.start({screenshots:true,snapshots:true,sources:false});
   const page = await context.newPage();
