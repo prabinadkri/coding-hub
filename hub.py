@@ -630,6 +630,9 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
         record["conversation"] = conversation
         indexed = memory.index()
         context = memory.context(conversation, request)
+        if apply and not general:
+            from circuit_integration import agent_context
+            context += agent_context(working_project)
         if not concise:
             print(f"Conversation: {conversation}\nContext: {indexed['indexed_files']}/{indexed['eligible_files']} source files indexed; {len(context.encode())} bytes selected.", flush=True)
         save_json(folder / "context.json", {"conversation": conversation, "index": indexed, "context_bytes": len(context.encode())})

@@ -1,5 +1,6 @@
 """Project-scoped Circuit Studio CLI integration; no changes to agent permissions."""
 import json
+import hashlib
 import os
 import tempfile
 import webbrowser
@@ -17,15 +18,17 @@ when asking an agent to create or edit circuits; analysis-only mode cannot run t
 Use `codehub circuit catalog --project .` to discover real component types.
 Read this project's `CIRCUIT_API.md` for the version 1 JSON plan format.
 Start from `circuit-example.json` when that example is supplied by the installation.
+The deliverable is the saved design.circuit file, not prose or a JSON example in chat.
+Inspect an existing design.circuit and apply edits; use new only when it is absent.
 Create a plan JSON in this project, then run:
 
 ```
-codehub circuit new --project . --file divider.circuit --plan plan.json
-codehub circuit inspect --project . --file divider.circuit
-codehub circuit apply --project . --file divider.circuit --plan edit.json --expected-revision SHA256_FROM_INSPECT
-codehub circuit simulate --project . --file divider.circuit --steps 1000
-codehub circuit check --project . --file divider.circuit
-codehub circuit svg --project . --file divider.circuit --output divider.svg
+codehub circuit new --project . --file design.circuit --plan plan.json
+codehub circuit inspect --project . --file design.circuit
+codehub circuit apply --project . --file design.circuit --plan edit.json --expected-revision SHA256_FROM_INSPECT
+codehub circuit simulate --project . --file design.circuit --steps 1000
+codehub circuit check --project . --file design.circuit
+codehub circuit svg --project . --file design.circuit --output divider.svg
 ```
 
 Pins use zero-based engine indices, not physical package numbers. Inspect before
@@ -126,10 +129,47 @@ def workspace(project=None, studio=None):
 def workspace_info(project):
     project = Path(project).expanduser().resolve(strict=True)
     command(project, 'catalog')  # Validate the integration and its installation.
-    has_circuit = inside(project, 'design.circuit').is_file()
-    return {'project': str(project), 'hasCircuit': has_circuit,
+    file = inside(project, 'design.circuit')
+    has_circuit = file.is_file()
+    revision = None
+    error = None
+    if has_circuit:
+        try:
+            with file.open('rb') as stream:
+                raw = stream.read(10 * 1024 * 1024 + 1)
+            if len(raw) > 10 * 1024 * 1024:
+                raise ValueError('design.circuit exceeds the 10 MB limit')
+            revision = hashlib.sha256(raw).hexdigest()
+            value = json.loads(raw)
+            if not isinstance(value, dict) or value.get('format') != 'circuit-studio' or value.get('version') != 2 or not isinstance(value.get('schematic'), str):
+                raise ValueError('Expected a Circuit Studio v2 project in design.circuit')
+        except (OSError, ValueError) as exc:
+            error = str(exc)
+    return {'project': str(project), 'hasCircuit': has_circuit, 'revision': revision, 'circuitError': error,
             'prompt': ('Improve this circuit: ' if has_circuit else 'Create a circuit: '),
-            'hint': ('Describe the changes you want. Return to Circuit Studio and click Check for result when finished.' if has_circuit else 'Describe your circuit. Use Open circuit when the assistant finishes.')}
+            'hint': ('Describe the changes you want, then check the saved circuit. In Studio: Check for result → Bring into editor.' if has_circuit else 'Describe your circuit. Check saved circuit after the assistant finishes, then open it in Studio.')}
+
+
+def agent_context(project):
+    """Stable delivery instructions, including workspaces created by older versions."""
+    project = Path(project)
+    if not (project / CONFIG).is_file():
+        return ''
+    try:
+        command(project, 'catalog')
+    except (OSError, ValueError):
+        return ''
+    return """
+
+Circuit Studio delivery contract: For a requested circuit creation or edit,
+use the available commands to save the actual design.circuit in this workspace.
+Read CIRCUITS.md and CIRCUIT_API.md. Inspect existing design.circuit, preserve its
+project ID, and apply a plan with the inspected revision; create it only if absent.
+A chat explanation, ASCII drawing, or unexecuted JSON plan is not a saved circuit.
+Run circuit check and appropriate simulation, report their actual results and
+model limitations. If tools fail or no file changes, say so explicitly. Never
+claim the circuit is ready merely because a plan was described.
+"""
 
 
 def open_workspace(project):

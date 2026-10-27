@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -83,6 +84,33 @@ class CircuitIntegrationTests(unittest.TestCase):
         self.assertIn('design.circuit',(project/'CIRCUITS.md').read_text())
         (project/'design.circuit').unlink();(project/'design.circuit').symlink_to(self.root/'outside')
         with self.assertRaises(ValueError):workspace_info(project)
+
+    def test_saved_file_status_is_based_on_bytes_not_chat(self):
+        initialize(self.project, self.studio)
+        self.assertIsNone(workspace_info(self.project)['revision'])
+        file = self.project / 'design.circuit'
+        raw = json.dumps({'format': 'circuit-studio', 'version': 2, 'schematic': '$ 1'}).encode()
+        file.write_bytes(raw)
+        before = workspace_info(self.project)
+        self.assertEqual(before['revision'], hashlib.sha256(raw).hexdigest())
+        self.assertIsNone(before['circuitError'])
+        (self.project / 'reply.md').write_text('Here is your circuit!')
+        self.assertEqual(workspace_info(self.project)['revision'], before['revision'])
+        file.write_bytes(raw + b'\n')
+        self.assertNotEqual(workspace_info(self.project)['revision'], before['revision'])
+        file.write_text('{}')
+        self.assertIn('v2 project', workspace_info(self.project)['circuitError'])
+        file.write_bytes(b'x' * (10 * 1024 * 1024 + 1))
+        self.assertIn('10 MB', workspace_info(self.project)['circuitError'])
+
+    def test_delivery_contract_reaches_build_but_not_analysis(self):
+        import hub
+        initialize(self.project, self.studio)
+        with patch.object(hub, 'STATE', self.root / 'private'), patch.object(hub, 'route_options', return_value=[('free','beam-free')]), patch.object(hub, 'command', return_value=['fake-agent']) as command_mock, patch.object(hub, 'run_process', return_value=(0,'Only an explanation',False)):
+            hub.run_task(self.project, 'Make a circuit', apply=True)
+            self.assertIn('Circuit Studio delivery contract', str(command_mock.call_args))
+            hub.run_task(self.project, 'Explain a circuit', apply=False)
+            self.assertNotIn('Circuit Studio delivery contract', str(command_mock.call_args))
 
     def test_open_launches_literal_project_and_no_model(self):
         import hub

@@ -153,26 +153,49 @@ try {
   // Circuit shortcut creates its workspace without a folder dialog or model call.
   await page.locator('#prompt').fill('My previous unsent circuit question');
   const priorProject=await page.locator('#project').inputValue();
-  const permissions=await page.locator('#allow-edits').isChecked();
+  if(await page.locator('#allow-edits').isChecked())await page.locator('label').filter({has:page.locator('#allow-edits')}).click();const permissions=false;
   await page.locator('#new-circuit').click();await page.getByText('Circuit assistant',{exact:true}).waitFor();
   const lab=await page.locator('#project').inputValue();assert.notEqual(lab,priorProject);
   assert.ok(fs.existsSync(path.join(lab,'CIRCUITS.md')));
   assert.equal(await page.locator('#prompt').inputValue(),'Create a circuit: ');
-  assert.equal(await page.locator('#allow-edits').isChecked(),permissions);
+  assert.equal(await page.locator('#allow-edits').isChecked(),true);
+  assert.match(await page.locator('#mode-note').textContent(),/Build circuit/);
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'No design.circuit was saved'}).waitFor();
   await page.locator('#open-circuit').click();await page.locator('#toast').filter({hasText:'No design.circuit yet'}).waitFor();
   fs.writeFileSync(path.join(lab,'design.circuit'),JSON.stringify({format:'circuit-studio',version:2,schematic:'$ 1'}));
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'Saved circuit changes found'}).waitFor();
   await page.locator('#open-circuit').click();await page.locator('#toast').filter({hasText:'Opening your saved design'}).waitFor();
   const stub=JSON.parse(fs.readFileSync(path.join(lab,'circuit-studio.json'),'utf8')).studio;
   await page.waitForTimeout(100);assert.equal(fs.readFileSync(path.join(stub,'opened'),'utf8'),path.join(lab,'design.circuit'));
   await page.screenshot({path:path.join(output,'circuit-assistant.png')});
   await page.locator('#restore-circuit-draft').click();await page.waitForFunction(()=>document.getElementById('prompt').value==='My previous unsent circuit question');
-  assert.equal(await page.locator('#project').inputValue(),priorProject);
+  assert.equal(await page.locator('#project').inputValue(),priorProject);assert.equal(await page.locator('#allow-edits').isChecked(),permissions);
   // The exact fragment shape emitted by Circuit Studio opens the selected circuit.
   await page.goto(fixture.url+'&circuit='+encodeURIComponent(lab));
   await page.waitForFunction(()=>document.getElementById('prompt').value==='Improve this circuit: ');
   assert.equal(await page.locator('#project').inputValue(),lab);
   assert.equal(new URL(page.url()).hash,'');
   assert.ok(await page.locator('#circuit-banner').isVisible());
+  assert.equal(await page.locator('#allow-edits').isChecked(),true);
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'No saved circuit changes'}).waitFor();
+  // Real submissions reach the isolated backend with the chosen permission mode.
+  async function submitCircuit(text, expectedMode){
+    await page.locator('#prompt').fill(text);
+    const sent=page.waitForResponse(r=>r.url().endsWith('/api/tasks')&&r.request().method()==='POST');
+    await page.locator('#run-task').click();assert.equal((await (await sent).json()).mode,expectedMode);
+    await page.waitForFunction(()=>!document.getElementById('run-task').disabled);
+  }
+  await submitCircuit('Create a circuit fixture','build');
+  if(await page.locator('#allow-edits').isChecked())await page.locator('label').filter({has:page.locator('#allow-edits')}).click();assert.match(await page.locator('#mode-note').textContent(),/Explain only/);
+  await submitCircuit('Explain the circuit fixture','analysis');
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'No saved circuit changes'}).waitFor();
+  await page.reload();await page.locator('#circuit-banner').waitFor();
+  assert.equal(await page.locator('#allow-edits').isChecked(),false);
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'No saved circuit changes'}).waitFor();
+  fs.writeFileSync(path.join(lab,'design.circuit'),'{}');
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'Cannot open saved circuit'}).waitFor();
+  fs.writeFileSync(path.join(lab,'design.circuit'),JSON.stringify({format:'circuit-studio',version:2,schematic:'$ 1',name:'Changed fixture'}));
+  await page.locator('#check-circuit').click();await page.locator('#circuit-hint').filter({hasText:'Saved circuit changes found'}).waitFor();
   assert.deepEqual(errors,[]);
   console.log('Web UI passed: reply file previews/reveal/download, routes, checks, queue, apply/undo, themes, browser chat discovery, saved reports/screenshots, draft preservation, natural-language routing, real console/layout failures, server cleanup, no UI JS errors.');
 } catch(error) {

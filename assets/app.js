@@ -21,7 +21,7 @@ let conversation=null,conversationProject='',treeSignature='',chatSignature='',p
 let memoryProject=null,chatLayout=null,followChat=true,sidebarBusy=false;
 let deleteTarget=null,deleteProjectTarget=null,deletingChat=false,historyEpoch=0;
 let signinId=null,signinBusy=false,signinPollBusy=false,chosenModels={},modelSignature='';
-let submitting=false,circuitContextProject=null;
+let submitting=false,circuitContextProject=null,circuitContext=null;
 let route='free-auto',selected=null,tasks=[],statusData={},folderPath='',folderParent='',lastOutput='',timer,refreshBusy=false,wasConnected=false;
 const routeHelp={'smart-free':'Verified free cloud manager + free/local workers. At most two manager calls. Simple questions skip the manager. No subscription fallback.','free-auto':'Verified free coding models → local Qwen. Skips observed quota cooldowns. No subscription routes or paid model fallback.',claude:'Uses your separate Claude subscription through its official CLI. Connect in Accounts first; your plan limits apply.',openai:'Uses your separate ChatGPT subscription through OpenCode. Connect in Accounts and choose a model; availability depends on your plan.',smart:'Choose the Antigravity manager model and up to 3 cloud workers for this same task. Independent project changes run in separate copies, then are integrated and checked. Local fallback stays serial. At most 2 bounded manager calls; token savings are measured, not guaranteed.',auto:'Antigravity → verified free models → local Qwen. Continues from partial work if a provider fails.',antigravity:'Uses Google’s native CLI and your Google sign-in. Fast and Deep adapt to your available Gemini models.',free:'Verifies current zero-cost pricing and retired-model status. Skips observed quota cooldowns. Choose a specific model to retry it.',local:'Qwen 3 8B runs on this computer. Best for focused tasks, with a 16K context and thinking disabled for speed.'};
 function positionTools(){
@@ -64,7 +64,7 @@ function syncChatLayout(){
 function settingsSummary(){$('chat-settings-summary').textContent=({'free-auto':'Free automatic',auto:'Automatic',smart:'Smart','smart-free':'Free Smart',antigravity:'Antigravity',free:'Free cloud',local:'Local Qwen',claude:'Claude account',openai:'ChatGPT account'}[route])+' · '+($('allow-edits').checked?'Edits enabled':'Analysis');}
 function setRoute(value){route=value;document.querySelectorAll('[data-route]').forEach(el=>{const yes=el.dataset.route===value;el.classList.toggle('selected',yes);el.setAttribute('aria-pressed',yes);});$('route-help').textContent=routeHelp[value];$('quality').disabled=['free','local'].includes(value);settingsSummary();renderModelPicker();saveDraft();}
 document.querySelectorAll('[data-route]').forEach(el=>el.addEventListener('click',()=>setRoute(el.dataset.route)));
-function mode(){ $('mode-note').textContent=$('allow-edits').checked?'Commands enabled: the agent can run shell commands and make requested changes. Review the results.':'Analysis only: the agent explains without executing commands. Enable commands to perform a task.';settingsSummary();saveDraft();}
+function mode(){ $('mode-note').textContent=$('allow-edits').checked?'Commands enabled: the agent can run shell commands and make requested changes. Review the results.':'Analysis only: the agent explains without executing commands. Enable commands to perform a task.';if(circuitContext?.project===currentProject())$('mode-note').textContent=!$('allow-edits').checked?'Explain only: no circuit will be created or changed. Enable Allow edits & commands to build.':$('preview-edits').checked?'Preview mode: edits stay in a separate copy. Apply the reviewed design.circuit before opening it in Studio.':'Build circuit: the agent can run commands and save design.circuit. Use Check saved circuit after it finishes.';settingsSummary();saveDraft();}
 $('allow-edits').addEventListener('change',mode);$('preview-edits').addEventListener('change',()=>{if($('preview-edits').checked)$('allow-edits').checked=true;mode();});
 $('task-scope').addEventListener('change',()=>{syncChatLayout();saveDraft();});
 function saveDraft(){try{localStorage.setItem('coding-hub-draft',JSON.stringify({scope:$('task-scope').value,project:currentProject(),prompt:$('prompt').value,route,quality:$('quality').value,edits:$('allow-edits').checked,preview:$('preview-edits').checked,conversation,conversationProject,chosenModels,workers:Number($('smart-workers').value)}));}catch{} }
@@ -358,15 +358,25 @@ function selectCircuitWorkspace(data){
   $('chat-title').textContent='Circuit assistant';$('chat-subtitle').textContent='Describe your circuit or the changes you want.';
   $('prompt').value=data.prompt;$('prompt').dispatchEvent(new Event('input'));$('prompt').focus();
   $('circuit-hint').textContent=data.hint;$('circuit-banner').hidden=false;circuitSuggestions();
-  $('preview-edits').checked=false;mode();saveDraft();
+  circuitContext=data;sessionStorage.setItem('circuit-baseline:'+data.project,data.revision||'');$('allow-edits').checked=true;$('preview-edits').checked=false;mode();saveDraft();
 }
 $('new-circuit').addEventListener('click',async()=>{if(circuitOpening)return;circuitOpening=true;$('new-circuit').disabled=true;try{selectCircuitWorkspace(await api('circuit/workspace',{}));}catch(e){toast(e.message,true);}finally{circuitOpening=false;$('new-circuit').disabled=false;}});
+$('check-circuit').addEventListener('click',async()=>{
+  const project=currentProject(),button=$('check-circuit');button.disabled=true;
+  try{
+    const data=await api('circuit/workspace?project='+encodeURIComponent(project));
+    if(currentProject()!==project)return;
+    const baseline=sessionStorage.getItem('circuit-baseline:'+project);
+    $('circuit-hint').textContent=data.circuitError?'Cannot open saved circuit: '+data.circuitError:!data.hasCircuit?'No design.circuit was saved. Enable Allow edits & commands and ask the assistant to create the actual file.':baseline!==null&&data.revision===baseline?'No saved circuit changes since this handoff. A text reply or JSON example is not a circuit file. Enable edits and ask it to save design.circuit.':baseline===null?'A saved design.circuit exists. Open it to review; this chat has no baseline to confirm changes.':'Saved circuit changes found. In the original Studio window choose Check for result → Bring into editor, or open the saved copy here. Review its wiring and reported checks.';
+  }catch(e){if(currentProject()===project)$('circuit-hint').textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $('open-circuit').addEventListener('click',async()=>{const button=$('open-circuit');button.disabled=true;try{await api('circuit/open',{project:currentProject()});toast('Opening your saved design in Circuit Studio.');}catch(e){toast(e.message,true);}finally{button.disabled=false;}});
 $('restore-circuit-draft').hidden=!sessionStorage.getItem('coding-hub-before-circuit');
 $('restore-circuit-draft').addEventListener('click',()=>{const previous=sessionStorage.getItem('coding-hub-before-circuit');if(previous){saveDraft();const current=localStorage.getItem('coding-hub-draft');localStorage.setItem('coding-hub-draft',previous);sessionStorage.setItem('coding-hub-before-circuit',current);location.reload();}});
 if(circuitLaunch)api('circuit/workspace?project='+encodeURIComponent(circuitLaunch)).then(selectCircuitWorkspace).catch(e=>toast('Circuit workspace could not open: '+e.message,true));
 
-function updateCircuitContext(){const project=currentProject();if(circuitContextProject===project)return;circuitContextProject=project;$('circuit-banner').hidden=true;if(!project||$('task-scope').value==='general')return;api('circuit/workspace?project='+encodeURIComponent(project)).then(data=>{if(currentProject()!==project)return;$('circuit-hint').textContent=data.hint;$('circuit-banner').hidden=false;circuitSuggestions();}).catch(()=>{});}
+function updateCircuitContext(){const project=$('task-scope').value==='general'?'':currentProject();if(circuitContextProject===project)return;circuitContextProject=project;circuitContext=null;$('circuit-banner').hidden=true;mode();if(!project||$('task-scope').value==='general')return;api('circuit/workspace?project='+encodeURIComponent(project)).then(data=>{if(currentProject()!==project||$('task-scope').value==='general')return;circuitContext=data;$('circuit-hint').textContent=data.hint;$('circuit-banner').hidden=false;circuitSuggestions();mode();}).catch(()=>{});}
 $('project').addEventListener('input',updateCircuitContext);
 
 window.addEventListener('hashchange',()=>{const parts=location.hash.slice(1).split('&'),project=new URLSearchParams(parts.slice(1).join('&')).get('circuit');if(!project)return;if(parts[0]){token=parts[0];sessionStorage.setItem('coding-hub-token',token);}history.replaceState(null,'',location.pathname);api('circuit/workspace?project='+encodeURIComponent(project)).then(selectCircuitWorkspace).catch(e=>toast('Circuit workspace could not open: '+e.message,true));});

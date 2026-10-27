@@ -510,8 +510,10 @@ The native **Open web** action uses the Linux desktop’s browser launcher and r
 ## Circuit Studio integration
 
 Use **New circuit** in the app or browser sidebar. Coding Hub creates a ready-to-use
-workspace automatically. Describe your circuit, select your model, enable **Allow
-edits & commands**, and send. **Open circuit in Studio** opens the saved
+workspace automatically, with **Allow edits & commands** enabled for this new circuit
+chat. Describe your circuit, select your model, and send. Turning edits off selects
+explanation only and cannot create a circuit. Use **Check saved circuit** after the
+reply to confirm an actual file was saved; prose and JSON examples are not imported. **Open circuit in Studio** opens the saved
 `design.circuit` directly. No folder selection, copied path or manual plugin setup
 is needed. **Return to previous draft** restores the draft you had before opening
 the circuit assistant. Creating/opening a workspace does not submit a model request.
