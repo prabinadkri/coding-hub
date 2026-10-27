@@ -142,7 +142,8 @@ def manager(project, prompt, quality, schema, log, model=None):
     # call it, so supply the schema as text and validate the returned JSON here.
     suffix = '\nReturn one JSON object only, conforming exactly to this schema:\n' + json.dumps(schema)
     prompt = clipped(prompt, MANAGER_PROMPT_LIMIT - len(suffix.encode()) - 80) + suffix
-    args = [binary, '-p', prompt, '--model', model or hub.AGY_MODELS[quality], '--agent', 'coding-hub-manager',
+    import accounts
+    args = [binary, '-p', prompt, '--model', model or accounts.resolve_antigravity_model(quality), '--agent', 'coding-hub-manager',
             '--output-format', 'json', '--print-timeout', '2m', '--disable-slash-commands']
     try:
         code, output, error = hub.run_process(args, workspace, hub.clean_environment('antigravity'), log, timeout=120, render_reply=False)
@@ -219,8 +220,11 @@ def execute(project, request, quality, apply, context, folder, model=None, worke
     workers = hub.validate_workers('smart', workers)
     if len(request.encode()) > 6000:
         raise ValueError('Smart works with focused requests up to 6,000 UTF-8 bytes. Split this task into smaller steps or use a direct route.')
+    if manager_backend == 'antigravity':
+        import accounts
+        manager_model = accounts.resolve_antigravity_model(quality, manager_model)
     report = {'manager_calls': 0, 'manager_call_limit': 2, 'manager_backend': manager_backend,
-              'manager_model': manager_model or ('verified free default' if manager_backend == 'free' else hub.AGY_MODELS[quality]),
+              'manager_model': manager_model or 'verified free default',
               'requested_workers': workers, 'parallel_workers': 1, 'manager_prompt_byte_limit': MANAGER_PROMPT_LIMIT,
               'manager_usage': [], 'worker_attempts': [], 'direct_baseline_tokens': None,
               'savings_verified': False, 'review': None}

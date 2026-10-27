@@ -53,7 +53,8 @@ with tempfile.TemporaryDirectory(prefix='hub-web-test-') as temporary:
     manager=dashboard.TaskManager(command_factory=lambda t: dashboard.TaskManager.command(t) if browser_checks.chat_request(t['prompt']) is not None else [sys.executable,'-u','-c','import time;print("Synthetic task");time.sleep(.4)'])
     status=Cache({'checking':False,'programs':{},'models':[hub.LOCAL_AGENT_MODEL],'free_models':['beam-free'],
                   'local_ready':True,'local_model':hub.LOCAL_AGENT_MODEL,'gpu':None,'ram':None,'loaded':[],
-                  'accounts':[],'provider_models':{},'home':str(root),'default_project':str(project)})
+                  'accounts':[],'provider_models':{'antigravity':[{'id':'gemini-live','name':'Gemini Live'}]},'home':str(root),'default_project':str(project)})
+    status.access=Cache({});status.prices=Cache({})
     server=dashboard.DashboardServer(('127.0.0.1',0),manager=manager,status=status,token='fixture-token')
     server.quota=Cache({});server.free_quota=Cache({})
     signal.signal(signal.SIGTERM,lambda *_:threading.Thread(target=server.shutdown,daemon=True).start())

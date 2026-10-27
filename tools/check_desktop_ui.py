@@ -31,7 +31,7 @@ def main():
     status = {'checking': False, 'programs': {'agy': True, 'opencode': True, 'ollama': True},
               'models': [hub.LOCAL_AGENT_MODEL, 'qwen3:8b'], 'free_models': list(hub.FREE_MODELS), 'local_ready': True, 'local_model': hub.LOCAL_AGENT_MODEL,
               'gpu': {'name': 'NVIDIA GeForce GTX 1650', 'used_mb': 128, 'total_mb': 4096, 'utilization': 17},
-              'cpu': 24.5, 'sampled_at': now, 'accounts': [{'id': p, 'installed': True} for p in ('antigravity','claude','openai')],
+              'cpu': 24.5, 'sampled_at': now, 'model_catalog_checked_at': now, 'pricing_checked_at': now, 'accounts': [{'id': p, 'installed': True} for p in ('antigravity','claude','openai')],
               'provider_models': {'antigravity': [
                   {'id':'claude-manager','name':'Claude Sonnet manager'},
                   {'id':'gemini-manager','name':'Gemini Flash manager'},
@@ -129,6 +129,7 @@ def main():
             return conversation
         if path == 'project/notes': return {'saved': True}
         if path.startswith('project?'): return {'requirements': 'Preserve public APIs. Run the relevant tests.', 'indexed_files': 428, 'eligible_files': 428, 'turns': 3, 'guidance_files': [{'name': 'CODING_HUB.md'}]}
+        if path == 'refresh': return status
         if path == 'quota/refresh': return status['quota']
         if path == 'free-quota/refresh': return status['free_quota']
         raise AssertionError('Unexpected request: ' + path)
@@ -320,8 +321,23 @@ def main():
             app.model_picker.set_selected(app.model_keys.index('claude-opus-4-6-thinking'))
             assert app.form()['model'] == 'claude-opus-4-6-thinking'
             assert not app.quality.get_sensitive()
+            saved_choices = app.model_choices['antigravity']
+            app.model_choices['antigravity'] = [m for m in saved_choices if m['id'] != 'claude-opus-4-6-thinking']
+            app.render_model_picker()
+            assert 'unavailable' in app.model_picker.get_selected_item().get_string()
+            assert app.form()['model'] == 'claude-opus-4-6-thinking'
+            app.model_picker.set_selected(app.model_keys.index('gemini-manager'))
+            settle(.1)
+            assert app.form()['model'] == 'gemini-manager'
+            assert 'claude-opus-4-6-thinking' not in app.model_keys
+            app.model_choices['antigravity'] = saved_choices
+            app.render_model_picker()
             app.model_picker.set_selected(1)
+            settle(.1)
             app.workers_picker.set_selected(1)
+            app.model_row.get_last_child().emit('clicked')
+            settle(.2)
+            assert any(p == 'refresh' for p, body in requests)
             assert app.form()['model'] == 'claude-manager'
             assert app.form()['workers'] == 2
             app.save_draft()

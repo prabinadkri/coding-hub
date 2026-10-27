@@ -15,7 +15,8 @@ import threading
 import time
 import hub
 
-NAMES = {'deepseek-v4.1-flash-free': 'DeepSeek V4.1 Flash', 'beam-free': 'Reflection Beam',
+NAMES = {'deepseek-v4.1-flash-free': 'DeepSeek V4.1 Flash', 'glm-5.3-flash-free': 'GLM 5.3 Flash',
+         'mimo-v2.6-flash-free': 'MiMo V2.6 Flash', 'beam-free': 'Reflection Beam',
          'space-bunny-free': 'Space Bunny', 'longcat-2.5-preview-free': 'LongCat 2.5 Preview', 'big-pickle': 'Big Pickle'}
 LIMITER_SOURCE = 'https://github.com/anomalyco/opencode/blob/5d9cd9b259f0456522f318a7435501d03cfbee79/packages/console/app/src/routes/zen/util/ipRateLimiter.ts'
 COVERAGE = ('Local OpenCode observations on this laptop, across projects. These are AI response and token counts, '

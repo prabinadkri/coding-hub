@@ -23,10 +23,11 @@ import terminal_ui
 
 ROOT = Path(__file__).resolve().parent
 STATE = Path(os.environ.get("CODING_HUB_STATE", str(Path.home() / ".local/state/coding-hub")))
-FREE_MODELS = ("deepseek-v4.1-flash-free", "beam-free", "space-bunny-free", "longcat-2.5-preview-free", "big-pickle")
+FREE_MODELS = ("deepseek-v4.1-flash-free", "glm-5.3-flash-free", "beam-free",
+               "mimo-v2.6-flash-free", "big-pickle",
+               "space-bunny-free", "longcat-2.5-preview-free")
 DEFAULT_ROUTE = "free-auto"
 ROUTES = ("free-auto", "auto", "smart", "smart-free", "antigravity", "free", "local", "claude", "openai")
-AGY_MODELS = {"fast": "gemini-3.8-flash-medium", "deep": "gemini-3.1-pro-high"}
 LOCAL_MODEL = "qwen3:8b"
 LOCAL_AGENT_MODEL = "coding-hub-qwen:8b"
 
@@ -464,7 +465,11 @@ def project_lock(project):
 def candidates(backend, quality):
     result = []
     if backend in ("auto", "antigravity") and executable("agy"):
-        result.append(("antigravity", AGY_MODELS[quality]))
+        import accounts
+        try:
+            result.append(("antigravity", accounts.resolve_antigravity_model(quality)))
+        except ValueError as error:
+            print(str(error))
     if backend in ("auto", "free-auto", "free") and executable("opencode"):
         try:
             import free_quota
@@ -588,6 +593,9 @@ def run_task(project, request, backend=DEFAULT_ROUTE, quality="fast", apply=Fals
         # Explicit direct routes only; they never enter the free/automatic fallback chain.
         routes = [(backend, model or ('opus' if quality == 'deep' else 'sonnet'))]
     elif model:
+        if backend == 'antigravity':
+            import accounts
+            model = accounts.resolve_antigravity_model(quality, model)
         if backend in ('free', 'smart-free') and model not in refresh_free_models():
             raise ValueError('This model is not currently verified as free. Choose another free model or use the route default.')
         if backend == 'local' and model not in local_models():

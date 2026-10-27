@@ -22,6 +22,13 @@ try {
   await page.goto(fixture.url);
   await page.locator('#connection').getByText('Connected locally',{exact:true}).waitFor();
   await page.locator('#task-scope').selectOption('project');await page.locator('#project').fill(fixture.project);
+  await page.locator('[data-route="antigravity"]').click();
+  await page.locator('#account-model').selectOption('gemini-live');
+  await page.evaluate(()=>{statusData.provider_models.antigravity=[];renderModelPicker();});
+  assert.match(await page.locator('#account-model option:checked').textContent(), /unavailable/);
+  assert.equal(await page.locator('#account-model').inputValue(),'gemini-live');
+  const modelRefresh=page.waitForResponse(r=>r.url().endsWith('/api/refresh'));
+  await page.locator('#refresh').click();assert.equal((await modelRefresh).status(),200);
   await page.locator('[data-route="smart-free"]').click();
   assert.equal(await page.locator('#smart-workers-row').isVisible(),true);
   await page.locator('#account-model').selectOption('beam-free');

@@ -17,6 +17,9 @@ import smart_route as smart
 
 class ParallelTests(unittest.TestCase):
     def setUp(self):
+        discovery = patch('accounts.resolve_antigravity_model', side_effect=lambda quality, selected=None: selected or 'gemini-test-flash')
+        discovery.start()
+        self.addCleanup(discovery.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.project = self.root / 'project'; self.project.mkdir()

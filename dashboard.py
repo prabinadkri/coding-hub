@@ -28,7 +28,7 @@ import free_quota
 import accounts
 from context_engine import ProjectMemory, project_tree, delete_project
 
-VERSION = "2.15.0"
+VERSION = "2.16.0"
 ACTIVE = {"queued", "running", "stopping"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -347,9 +347,9 @@ class PricingCache:
         self.updated = 0
         self.value = {'free_models': [], 'pricing_checked_at': None, 'pricing_error': False}
 
-    def get(self):
+    def get(self, force=False):
         with self.lock:
-            if not self.updating and time.monotonic() - self.updated > 300:
+            if not self.updating and (force or time.monotonic() - self.updated > 300):
                 self.updating = True
                 threading.Thread(target=self.refresh, daemon=True).start()
             return dict(self.value)
@@ -362,6 +362,7 @@ class PricingCache:
         except Exception:
             with self.lock:
                 self.value['pricing_error'] = True
+                self.value['free_models'] = []
         finally:
             with self.lock:
                 self.updated, self.updating = time.monotonic(), False
@@ -440,6 +441,7 @@ class StatusCache:
             # Cloud catalog calls never hold up live local hardware sampling.
             # Executing a selected free model still verifies its price afresh.
             value.update(self.prices.get())
+            value['model_catalog_notes'] = accounts.catalog_notes(value)
             import local_resource
             value['local_resource'] = local_resource.status()
             value.update(checking=False, local_ready=hub.LOCAL_AGENT_MODEL in value["models"], local_model=hub.LOCAL_AGENT_MODEL)
@@ -675,6 +677,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/project/delete':
                 return self.reply(200, self.server.manager.delete_project(data))
             if self.path == "/api/refresh":
+                self.server.status.access.get(True)
+                self.server.status.prices.get(True)
                 return self.reply(200, self.server.status.get(True))
             if self.path == "/api/quota/refresh":
                 return self.reply(200, self.server.quota.get(True))

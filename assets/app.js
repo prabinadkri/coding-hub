@@ -287,7 +287,24 @@ function scrollChatBottom(){const el=$('chat-thread');followChat=true;el.scrollT
 $('prompt').addEventListener('input',resizePrompt);
 $('chat-latest').addEventListener('click',scrollChatBottom);
 $('chat-thread').addEventListener('scroll',()=>{const el=$('chat-thread');followChat=el.scrollHeight-el.scrollTop-el.clientHeight<48;$('chat-latest').hidden=followChat;});
-function renderModelPicker(){$('smart-workers-row').hidden=!['smart','smart-free'].includes(route);$('model-label').textContent=['smart','smart-free'].includes(route)?'Manager model':'Model';const choices=['free','smart-free'].includes(route)?(statusData.free_models||[]).map(id=>({id,name:id})):route==='local'?(statusData.models||[]).map(id=>({id,name:id})):statusData.provider_models?.[route==='smart'?'antigravity':route]||[];const saved=chosenModels[route]||'';$('quality').disabled=!['auto','antigravity','smart'].includes(route)||!!saved;const options=saved&&!choices.some(m=>m.id===saved)?[{id:saved,name:saved},...choices]:choices;const signature=JSON.stringify([route,options,saved]);$('account-model-row').hidden=!['antigravity','claude','openai','free','local','smart','smart-free'].includes(route);if(signature===modelSignature)return;modelSignature=signature;$('account-model').replaceChildren(new Option(route==='openai'?'Choose a model':'Use route default',''),...options.map(m=>new Option(m.name,m.id)));$('account-model').value=saved;}
+function renderModelPicker(){
+  $('smart-workers-row').hidden=!['smart','smart-free'].includes(route);
+  $('model-label').textContent=['smart','smart-free'].includes(route)?'Manager model':'Model';
+  const names={'deepseek-v4.1-flash-free':'DeepSeek V4.1 Flash','glm-5.3-flash-free':'GLM 5.3 Flash','beam-free':'Reflection Beam','mimo-v2.6-flash-free':'MiMo V2.6 Flash','big-pickle':'Big Pickle'};
+  const choices=['free','smart-free'].includes(route)?(statusData.free_models||[]).map(id=>({id,name:names[id]||id})):route==='local'?(statusData.models||[]).map(id=>({id,name:id})):statusData.provider_models?.[route==='smart'?'antigravity':route]||[];
+  const saved=chosenModels[route]||'';
+  $('quality').disabled=!['auto','antigravity','smart'].includes(route)||!!saved;
+  const options=saved&&!choices.some(m=>m.id===saved)?[{id:saved,name:saved+' · unavailable / not verified'},...choices]:choices;
+  const signature=JSON.stringify([route,options,saved]);
+  $('account-model-row').hidden=!['antigravity','claude','openai','free','local','smart','smart-free'].includes(route);
+  const family=['auto','antigravity','smart'].includes(route)?'antigravity':['free-auto','free','smart-free'].includes(route)?'free':null;
+  $('model-catalog-note').hidden=!family;
+  $('model-catalog-note').textContent=statusData.model_catalog_notes?.[family]||'Checking available models…';
+  if(signature===modelSignature)return;
+  modelSignature=signature;
+  $('account-model').replaceChildren(new Option(route==='openai'?'Choose a model':'Use route default',''),...options.map(m=>new Option(m.name,m.id)));
+  $('account-model').value=saved;
+}
 $('smart-workers').addEventListener('change',saveDraft);
 $('account-model').addEventListener('change',()=>{chosenModels[route]=$('account-model').value;renderModelPicker();saveDraft();});
 function renderHardwareActivity(s){const gpu=s.gpu?.utilization,cpu=s.cpu;$('gpu-load').textContent=gpu==null?'Not available':gpu+'% active';$('cpu-load').textContent=cpu==null?'Waiting for sample':Math.round(cpu)+'% active';$('gpu-load-meter').style.width=Math.max(0,Math.min(100,gpu||0))+'%';$('cpu-load-meter').style.width=Math.max(0,Math.min(100,cpu||0))+'%';$('hardware-age').textContent=s.sampled_at?'Live · sampled '+new Date(s.sampled_at*1000).toLocaleTimeString()+' · refreshes about every 3–6 seconds':'';}

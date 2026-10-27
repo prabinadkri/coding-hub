@@ -40,9 +40,10 @@ class HubTests(unittest.TestCase):
         with patch.object(hub, "executable", return_value="fake"), \
              patch.object(hub, "refresh_free_models", side_effect=OSError("offline")), \
              patch.object(hub, "local_models", return_value=[hub.LOCAL_AGENT_MODEL]), \
+             patch("accounts.resolve_antigravity_model", return_value="gemini-test-flash"), \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(hub.candidates("auto", "fast"), [
-                ("antigravity", hub.AGY_MODELS["fast"]), ("local", hub.LOCAL_AGENT_MODEL)])
+                ("antigravity", "gemini-test-flash"), ("local", hub.LOCAL_AGENT_MODEL)])
 
     def test_main_and_helper_models_are_free_and_same(self):
         env = hub.clean_environment("free", "space-bunny-free", True)

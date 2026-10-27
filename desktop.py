@@ -17,6 +17,7 @@ import urllib.request
 
 import dashboard
 import hub
+import accounts
 from message_format import blocks, inline_markup, clean_reply
 
 
@@ -430,7 +431,10 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             self.model_picker.set_hexpand(True)
             self.model_picker.connect('notify::selected', self.model_changed)
             self.model_row.append(self.model_picker)
+            self.model_row.append(self.button('Refresh', lambda *_: self.background(lambda: api('refresh', {}), self.render_accounts)))
             settings_body.append(self.model_row)
+            self.model_catalog_note = self.label('', 'footnote')
+            settings_body.append(self.model_catalog_note)
             self.workers_row = self.row()
             self.workers_row.append(self.label('Cloud workers', 'muted'))
             self.workers_picker = Gtk.DropDown.new_from_strings(['1 · Sequential', '2 · Parallel', '3 · Parallel'])
@@ -683,11 +687,13 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             choices = self.model_choices.get('antigravity' if route == 'smart' else 'free' if route == 'smart-free' else route, [])
             selected = self.chosen_models.get(route)
             if selected and not any(m['id'] == selected for m in choices):
-                choices = [{'id': selected, 'name': selected}] + choices
+                choices = [{'id': selected, 'name': selected + ' · unavailable / not verified'}] + choices
             keys = [None] + [m['id'] for m in choices]
-            signature = (route, keys)
+            signature = (route, [(m['id'], m['name']) for m in choices])
             self.model_row.set_visible(route in ('antigravity', 'claude', 'openai', 'free', 'local', 'smart', 'smart-free'))
             self.model_row.get_first_child().set_text('Manager model' if route in ('smart', 'smart-free') else 'Model')
+            self.model_catalog_note.set_visible(route in ('auto', 'antigravity', 'smart', 'free-auto', 'free', 'smart-free'))
+            self.model_catalog_note.set_text(getattr(self, 'catalog_notes', {}).get('antigravity' if route in ('auto', 'antigravity', 'smart') else 'free', 'Checking available models…'))
             self.workers_row.set_visible(route in ('smart', 'smart-free'))
             self.quality.set_sensitive(route in ('auto', 'antigravity', 'smart') and not selected)
             if signature == self.model_signature:
@@ -704,8 +710,12 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 return
             selected = self.model_picker.get_selected()
             if selected < len(self.model_keys):
-                self.chosen_models[routes[self.route.get_selected()]] = self.model_keys[selected]
-                self.render_model_picker()
+                route = routes[self.route.get_selected()]
+                self.chosen_models[route] = self.model_keys[selected]
+                self.quality.set_sensitive(route in ('auto', 'antigravity', 'smart') and not self.model_keys[selected])
+                # Replacing a Gtk.DropDown model inside its selection signal can
+                # invalidate GTK's active list item (notably a removed-model row).
+                GLib.idle_add(self.render_model_picker)
 
         def browse(self, *_):
             dialog = Gtk.FileChooserNative.new("Choose a project", self.window,
@@ -1685,7 +1695,9 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 label.set_text(text if ready else 'CLI not installed on this computer')
                 button.set_sensitive(ready and not self.signin_id)
                 button.set_label('Manage sign-in' if state in ('connected', 'saved') else 'Sign in')
-            self.model_choices = dict(status.get('provider_models', {}), free=[{'id': mid, 'name': mid} for mid in status.get('free_models', [])], local=[{'id': mid, 'name': mid} for mid in status.get('models', [])])
+            import free_quota
+            self.catalog_notes = accounts.catalog_notes(status)
+            self.model_choices = dict(status.get('provider_models', {}), free=[{'id': mid, 'name': free_quota.NAMES.get(mid, mid)} for mid in status.get('free_models', [])], local=[{'id': mid, 'name': mid} for mid in status.get('models', [])])
             self.render_model_picker()
 
         def start_signin(self, provider, reconnect=False):

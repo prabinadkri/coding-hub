@@ -386,7 +386,7 @@ class DashboardTests(unittest.TestCase):
 class RoutingTests(unittest.TestCase):
     def test_auto_does_not_check_free_prices_when_first_route_succeeds(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(hub, "STATE", Path(folder) / "state"), \
-             patch.object(hub, "candidates", return_value=[("antigravity", hub.AGY_MODELS["fast"])]) as candidates, \
+             patch.object(hub, "candidates", return_value=[("antigravity", "gemini-test-flash")]) as candidates, \
              patch.object(hub, "executable", return_value="agent"), \
              patch.object(hub, "run_process", return_value=(0, "done", False)), \
              contextlib.redirect_stdout(io.StringIO()):

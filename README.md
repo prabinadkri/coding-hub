@@ -83,7 +83,7 @@ Protocol and native-client references: [MCP transports](https://modelcontextprot
 
 1. Open **Coding Hub** from Applications. Pin that entry to your dock if desired. Its desktop ID and icon match the running GTK window.
 2. Choose **New chat → General task** for questions, Linux commands, or standalone work—no folder required. Choose **Project task** or **New project** to select a project folder. Existing chats keep their original scope.
-3. Expand **Chat settings**. Use **Free automatic** for free cloud coding with local fallback. Choose **Free cloud** or **Local** to select a particular model. Antigravity lists models available to your Google account, including any Claude/GPT options. Smart lets you choose its Antigravity manager model and up to three cloud workers; Automatic starts with Antigravity.
+3. Expand **Chat settings**. Use **Free automatic** for free cloud coding with local fallback. Choose **Free cloud** or **Local** to select a particular model. Antigravity lists models available to your Google account, including any Claude/GPT options your account still exposes. Smart lets you choose its Antigravity manager model and up to three cloud workers; Automatic starts with Antigravity.
 4. Leave **Allow edits & commands** off for explanations. Enable it to let the agent modify project files and run commands.
 5. An animated indicator shows observed activity, such as planning, a tool action, waiting for the model, or review, with elapsed time. **Stop task** remains beside Send. Click **Send** or press **Ctrl+Enter** in the message box. Enter adds a line. **Ctrl+N** starts a new chat.
 6. Replies format headings, lists, inline code, and code blocks. Replies span the reading area, with small copy/review actions beneath them and language labels on code blocks. The compact composer stays below the conversation. Sending moves to the newest message; scrolling up pauses following. **Latest messages** returns to the bottom.
@@ -109,7 +109,7 @@ Optional separate subscriptions:
 - **Claude:** install the [official Claude CLI](https://code.claude.com/docs/en/overview), then sign in from Accounts. Choose **Claude account** in Chat settings.
 - **ChatGPT:** sign in through the installed [OpenCode provider flow](https://opencode.ai/docs/providers/#openai). Choose its ChatGPT subscription option, then **ChatGPT account** and a model in Chat settings. API-key billing is not enabled by this route.
 
-These routes use your existing plan’s limits and model eligibility. They are never selected by Automatic or Smart and do not purchase a subscription. Separate Claude/ChatGPT quotas are not exposed by this integration; consult those providers’ own account interfaces. Antigravity’s included Claude/GPT quota remains visible under **Usage & limits**.
+These routes use your existing plan’s limits and model eligibility. They are never selected by Automatic or Smart and do not purchase a subscription. Separate Claude/ChatGPT quotas are not exposed by this integration; consult those providers’ own account interfaces. Antigravity’s provider-reported quota groups remain visible under **Usage & limits**; model access depends on the current plan and catalog.
 
 ### CLI
 
@@ -207,7 +207,7 @@ codehub web   # Dashboard in your browser
 
 If `codehub` is not on your PATH, use `~/.local/bin/codehub` instead. On Linux, **Coding Hub** in the Applications menu and `Coding Hub.sh` open the standalone app. The app icon's context menu also offers the browser and terminal. On macOS, `Coding Hub.command` opens the browser interface.
 
-Choose a project folder and enter your task. Analysis mode is the default. Enable **Allow edits & commands** for implementation. **Fast** selects Flash for Antigravity; **Deep** selects Pro. Expand **Chat settings** to choose a specific model for Antigravity, Free cloud, or Local. Explicit free-model choices still require fresh zero-price verification before execution.
+Choose a project folder and enter your task. Analysis mode is the default. Enable **Allow edits & commands** for implementation. **Fast** prefers the newest available Gemini Flash at medium effort. **Deep** prefers an available Gemini Pro/Argon, falling back to the newest available Flash at high effort. Defaults are resolved from the native account catalog before execution. Expand **Chat settings** to choose a specific model for Antigravity, Free cloud, or Local. Explicit free-model choices still require fresh zero-price verification before execution.
 
 The app and browser share one background server and task history; reopening the app raises its existing window. The terminal uses the same routing engine, models, project memory, and saved conversations. CLI chats appear under their project in the app and browser; native CLI run logs remain separate from dashboard task activity.
 
@@ -311,7 +311,7 @@ codehub chat --backend smart --project ~/my-project --apply
 codehub run --backend smart --model claude-sonnet-4-6 --workers 2 --project ~/my-project --apply "Build the frontend and backend for this system"
 ```
 
-Choose **Smart → Manager model** in Chat settings, or use `/model MODEL_ID` / `--model MODEL_ID` in the CLI. Choices come from your Antigravity account's current model catalog, including its available Claude, Gemini, and other models. A selected model is used for both planning and review; it never silently switches to a worker model. With **Use route default**, Fast uses Flash and Deep uses Pro. Separate Claude/ChatGPT subscriptions remain direct routes.
+Choose **Smart → Manager model** in Chat settings, or use `/model MODEL_ID` / `--model MODEL_ID` in the CLI. Choices come from your Antigravity account's current model catalog, including its available Claude, Gemini, and other models. A selected model is used for both planning and review; it never silently switches to a worker model. With **Use route default**, Fast prefers available Gemini Flash; Deep prefers an available Gemini Pro/Argon or falls back to Flash High. No fixed, retired model ID is used. Separate Claude/ChatGPT subscriptions remain direct routes.
 
 Choose **Cloud workers: 1, 2, or 3**. This is one request in one chat: for example, the manager can assign frontend files to one worker and backend files to another, with a shared API contract. Workers use distinct currently verified free models. Each receives a private copy of eligible project source, including uncommitted files. Their allowed file lists must be disjoint. After they finish, Coding Hub checks file ownership and checks that the originals have not changed, combines the edits, and runs a free/local integration worker to check interfaces, run tests, and fix integration issues. The manager then reviews bounded reports and observed evidence. The normal **View changes** action shows the final changes in your project.
 
@@ -380,6 +380,16 @@ codehub index --project ~/my-project --seconds 120
 
 A synthetic validation indexed 10,000 small source files in about 4.7 seconds on one development machine and selected 656 bytes for a targeted symbol query. A live local Qwen test found a function in a separate 1,000-file demo and correctly recalled a project requirement on the next turn. These are focused checks, not a guarantee for arbitrary codebases. Large files, broad architectural changes, ambiguous queries, and difficult reasoning can still require manual direction or a stronger cloud model.
 
+## Model availability and Kimi
+
+Antigravity and Smart list models returned by the signed-in native `agy models` command. All returned models are selectable, including future versions without a Hub update. The list refreshes about every five minutes; the web toolbar **Refresh** and the app's model-row **Refresh** also reload it immediately. Saved choices missing from the latest list are labeled **unavailable / not verified**, never silently replaced. Execution rechecks explicit Antigravity selections; Smart resolves and pins its manager once for both planning and review. An unavailable catalog stops that route, while Automatic can continue to its free/local fallback.
+
+As announced in [Google's current model documentation](https://antigravity.google/docs/models), legacy Claude 4.6 and GPT-OSS 120B are scheduled for removal on **November 2, 2026**. The picker labels those legacy entries while the native CLI still lists them. This does not mean all Claude models are disappearing: newer versions depend on plan eligibility. Model availability and remaining quota are different checks.
+
+Free cloud choices are a reviewed coding shortlist, dynamically filtered by live zero-cost metadata; they are not every model marketed as free. Prices are fetched again before each run, and helper models remain pinned to the same free model. New families require review rather than automatically sending project code to an unknown provider. Optional subscription routes remain separate.
+
+As of **October 27, 2026**, [Kimi K3.1 Pro and Highspeed](https://www.kimi.ai/blog/kimi-k3-1-pro) are the latest Kimi release. The [official API](https://platform.kimi.ai/) lists paid pricing; Kimi K2.5 Free is deprecated in OpenCode's catalog. No current, verified free K3.1 Pro endpoint was found for this integration, so it is not added to the free route. Free access in a provider's website does not establish a free API for a coding agent.
+
 ## Antigravity quota
 
 The browser quota card and the native app's **Usage & limits** page show remaining percentages, provider reset times, countdowns, and the last successful check. You can refresh manually or use:
@@ -421,9 +431,9 @@ Default free selection skips a model until its recorded `Retry-After` time. A sh
 
 ## Free access and privacy
 
-The coding allowlist contains DeepSeek V4.1 Flash, Reflection Beam, Space Bunny, LongCat 2.5 Preview, and Big Pickle. New additions are coding-focused models: see [DeepSeek's release](https://www.deepseek.com/en/news/deepseek-v4-1-flash/) and [Beam's OpenCode integration](https://reflection.ai/blog/beam-is-available). Selection requires current zero prices for every recorded cost, tool support, and a non-deprecated entry in [models.dev](https://models.dev). The primary and helper models stay pinned to that same free model. An arbitrary model with “free” in its name is never automatically added.
+The preferred coding shortlist is DeepSeek V4.1 Flash, GLM 5.3 Flash, Reflection Beam, MiMo V2.6 Flash, and Big Pickle. Historical Space Bunny and LongCat entries remain tracked for usage, but are absent from the picker when the provider no longer lists them as active and free. New additions are coding-focused models: see [DeepSeek's release](https://www.deepseek.com/en/news/deepseek-v4-1-flash/) and [Beam's OpenCode integration](https://reflection.ai/blog/beam-is-available). Selection requires current zero prices for every recorded cost, tool support, and a non-deprecated entry in [models.dev](https://models.dev). The primary and helper models stay pinned to that same free model. An arbitrary model with “free” in its name is never automatically added.
 
-The allowlist was reviewed on October 19, 2026. It is a selection policy, not a claim that one model is best for every repository. If current pricing cannot be checked, the free cloud route is skipped. Catalogs can lag provider changes, so this is not a billing guarantee. Keep accounts on free access and do not add payment details or select paid models manually. Provider quotas and promotions can change.
+The shortlist was reviewed on October 27, 2026 against the [current OpenCode model/pricing page](https://dev.opencode.ai/v2/docs/console/models). GLM and MiMo passed a live file-editing task and six independent checks through the installed official CLI. DeepSeek, Beam, and Big Pickle also passed live read-tool smoke checks. Nemotron 3 Ultra was listed at zero cost but returned “Model is unavailable” in a live check, so it was excluded. This verifies basic integration, not broad coding quality. It is a selection policy, not a claim that one model is best for every repository. If current pricing cannot be checked, the free cloud route is skipped. Catalogs can lag provider changes, so this is not a billing guarantee. Keep accounts on free access and do not add payment details or select paid models manually. Provider quotas and promotions can change.
 
 Setup sets Antigravity's `useG1Credits` preference to false and backs up existing settings once. No credit purchases are made. [OpenCode's free Big Pickle terms](https://opencode.ai/docs/zen/) say free-period data may be used to improve the model.
 

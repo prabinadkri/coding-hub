@@ -76,7 +76,7 @@ class FreeRoutingTests(unittest.TestCase):
         models['deepseek-v4.1-flash-free'] = dict(free, cost={'input': 0, 'output': 1})
         models['unknown-free'] = free
         self.assertEqual(hub.free_models({'opencode': {'models': models}}),
-                         ['space-bunny-free', 'longcat-2.5-preview-free', 'big-pickle'])
+                         [name for name in hub.FREE_MODELS if name not in ('beam-free', 'deepseek-v4.1-flash-free')])
 
     def test_automatic_route_cannot_override_its_model_to_a_paid_one(self):
         with self.assertRaises(ValueError):

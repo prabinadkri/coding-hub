@@ -229,25 +229,78 @@ if __name__ == '__main__' and len(sys.argv) == 4 and sys.argv[1] == '--child':
     os.execvpe(args[0], args, environment(sys.argv[2]))
 
 
+def antigravity_models():
+    """Ask the installed, signed-in native CLI; never infer account entitlement."""
+    binary = hub.executable('agy')
+    if not binary:
+        raise ValueError('Antigravity is not installed.')
+    try:
+        data = subprocess.run([binary, 'models'], env=environment('antigravity'), capture_output=True,
+                              text=True, timeout=12)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError('Antigravity model discovery failed. Check Accounts and refresh models.') from error
+    if data.returncode:
+        raise ValueError('Antigravity model discovery failed. Check Accounts and refresh models.')
+    models = []
+    for line in data.stdout.splitlines():
+        if not re.match(r'^[a-z0-9][a-z0-9._-]+\t', line):
+            continue
+        mid, name = line.split('\t')[0], line.split('\t')[-1]
+        # Published retirement notice, not an entitlement filter. The native list
+        # remains authoritative; new Claude/Gemini versions require no release here.
+        legacy = mid.startswith(('claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-oss-120b-'))
+        models.append({'id': mid, 'name': name + (' · retiring Nov 2, 2026' if legacy else '')})
+    if not models:
+        raise ValueError('No Antigravity models were returned. Check Accounts and refresh models.')
+    return models
+
+
+def resolve_antigravity_model(quality='fast', selected=None):
+    models = antigravity_models()
+    if selected:
+        if selected not in {item['id'] for item in models}:
+            raise ValueError('The selected Antigravity model is no longer available to this account. '
+                             'Refresh models and choose another model or Use route default.')
+        return selected
+    # Gemini-first defaults, ranked only among the live account models. Explicit
+    # selections retain access to every provider exposed by the native CLI.
+    def rank(item):
+        mid = item['id']
+        gemini, flash = mid.startswith('gemini-'), 'flash' in mid
+        version = re.search(r'^gemini-(\d+(?:\.\d+)*)', mid)
+        version = tuple(int(n) for n in version[1].split('.')) if version else ()
+        effort = ('high', 'medium', 'low') if quality == 'deep' else ('medium', 'low', 'high')
+        level = next((3 - i for i, name in enumerate(effort) if mid.endswith('-' + name)), 0)
+        return gemini, (not flash if quality == 'deep' else flash), version, level
+    return max(models, key=rank)['id']
+
+
 def model_catalog():
     models = {'claude': [{'id': 'sonnet', 'name': 'Claude Sonnet'}, {'id': 'opus', 'name': 'Claude Opus'}]}
-    binary = hub.executable('agy')
-    if binary:
-        try:
-            data = subprocess.run([binary, 'models'], env=environment('antigravity'), capture_output=True,
-                                  text=True, timeout=12)
-            models['antigravity'] = [{'id': line.split('\t')[0], 'name': line.split('\t')[-1]}
-                for line in data.stdout.splitlines() if re.match(r'^[a-z0-9][a-z0-9._-]+\t', line)]
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    try:
+        models['antigravity'] = antigravity_models()
+    except ValueError:
+        pass
     try:
         catalog = hub.get_json('https://models.dev/api.json', 10).get('openai', {}).get('models', {})
         choices = [{'id': key, 'name': value.get('name', key)} for key, value in catalog.items()
-                   if value.get('tool_call') and key.startswith('gpt-') and not value.get('deprecated')]
+                   if value.get('tool_call') and key.startswith('gpt-') and value.get('status') != 'deprecated']
         models['openai'] = sorted(choices, key=lambda m: m['id'], reverse=True)[:80]
     except Exception:
         pass
     return models
+
+
+def catalog_notes(status):
+    def checked(key):
+        stamp = status.get(key)
+        return time.strftime('%H:%M', time.localtime(stamp)) if isinstance(stamp, (int, float)) else None
+    agy, free = checked('model_catalog_checked_at'), checked('pricing_checked_at')
+    return {
+        'antigravity': ('Account model list unavailable. Refresh or check Accounts.' if status.get('antigravity_catalog_error') else
+                        'Live account models · checked ' + agy + '. Defaults adapt to availability.' if agy else 'Checking account models…'),
+        'free': ('Free prices could not be verified. Refresh to retry.' if status.get('pricing_error') else
+                 'Coding shortlist · zero prices checked ' + free + '. Rechecked before every run; limits apply.' if free else 'Checking free coding models…')}
 
 
 class AccessCache:
@@ -262,14 +315,16 @@ class AccessCache:
         with self.lock:
             if not self.updating and (force or time.monotonic() - self.updated > 30):
                 self.updating = True
-                threading.Thread(target=self.refresh, daemon=True).start()
+                threading.Thread(target=self.refresh, kwargs={'force': force}, daemon=True).start()
             return dict(self.value)
 
-    def refresh(self):
+    def refresh(self, force=False):
         try:
             value = dict(self.value, accounts=available(), account_status=connection_status())
-            if time.monotonic() - self.catalog_updated > 300:
+            if force or time.monotonic() - self.catalog_updated > 300:
                 value['provider_models'] = model_catalog()
+                value['model_catalog_checked_at'] = time.time()
+                value['antigravity_catalog_error'] = bool(hub.executable('agy') and not value['provider_models'].get('antigravity'))
                 self.catalog_updated = time.monotonic()
             with self.lock:
                 self.value, self.updated = value, time.monotonic()
