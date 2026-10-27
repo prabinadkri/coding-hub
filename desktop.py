@@ -671,7 +671,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
                 self.hint.set_text({
                     'free-auto': 'Verified free coding models → local Qwen. Skips observed quota cooldowns. No subscription routes or paid model fallback.',
                     'auto': 'Antigravity → verified free models → local Qwen. Continues from partial work if a provider fails.',
-                    'antigravity': 'Uses your Google sign-in. Fast selects Flash; Deep selects Pro. Provider quotas apply.',
+                    'antigravity': 'Uses your Google sign-in. Fast and Deep adapt to your available Gemini models. Provider quotas apply.',
                     'free': 'Checks zero-cost pricing and retired-model status. Skips observed quota cooldowns; an explicitly chosen model lets you retry.',
                     'local': 'Qwen3 8B runs on this computer with 16K context. Best for focused tasks.',
                     'smart-free': 'Verified free manager + free/local workers. At most 2 manager calls. Simple questions skip the manager. No subscription fallback.',
@@ -1537,7 +1537,7 @@ def create_application(Gtk, Gdk, Gio, GLib, api, url, browser_launcher=None):
             grid = self.flow()
             self.model_metrics = {}
             for key, title, value, note in (
-                ('cloud', 'ANTIGRAVITY', 'Checking', 'Flash for speed · Pro for deeper work'),
+                ('cloud', 'ANTIGRAVITY', 'Checking', 'Live account models · adaptive defaults'),
                 ('free', 'FREE CLOUD', 'Checking', 'Current pricing is verified before each task'),
                 ('local', 'LOCAL QWEN 8B', 'Checking', 'Private inference · 16K context')):
                 card, value_label, note_label = self.metric(title, value, note)

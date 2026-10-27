@@ -407,7 +407,7 @@ The hub invokes `agy -p /usage --output-format json`. This is Antigravity's own 
 
 ![Coding Hub usage and limits](docs/usage.jpg)
 
-Open **Usage & limits** in the browser sidebar or **Usage & limits** in the native app. Space Bunny, LongCat 2.5 Preview, and Big Pickle each show today's locally observed AI responses and tokens, with input, output, reasoning, and cache details. The same data is available with `codehub quota --provider free`.
+Open **Usage & limits** in the browser sidebar or **Usage & limits** in the native app. The tracked coding models each show today's locally observed AI responses and tokens, with input, output, reasoning, and cache details. The same data is available with `codehub quota --provider free`.
 
 **Remaining allowance is shown as “Not reported.”** The current free-model integration has no public remaining-quota endpoint. Counts read from OpenCode's local database are not the provider's request counter: retries, traffic from other devices, and shared public-IP usage may be missing. A free model is not an unlimited model.
 
